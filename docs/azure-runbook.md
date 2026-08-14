@@ -99,6 +99,18 @@ Do not add credentials to the file. `DefaultAzureCredential` uses the Azure CLI
 session for Foundry and Speech. Start the application with `npm run dev` and open
 `http://localhost:3000`.
 
+Alternatively, the checked-in launcher applies the provisioned non-secret
+endpoints, verifies Azure CLI authentication and local prerequisites, starts the
+server, waits for health, and opens the browser:
+
+```powershell
+.\scripts\Start-Local.ps1
+```
+
+Use `-Port 3002`, `-DataDirectory <path>`, `-NoBrowser`, or `-DemoMode` as
+needed. The launcher does not store credentials; Azure SDK authentication still
+comes from the active Azure CLI session.
+
 ## Optional Container Apps Job rendering
 
 Set `RENDER_EXECUTION_MODE=container-apps-job` and configure

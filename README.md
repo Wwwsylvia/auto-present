@@ -25,6 +25,19 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 
 ## Run locally
 
+For the provisioned Azure-backed configuration, use the one-command launcher:
+
+```powershell
+.\scripts\Start-Local.ps1
+```
+
+It validates Node.js, npm, FFmpeg, Azure CLI authentication, starts the app in
+the background, waits for the health endpoint, and opens the browser. Use
+`-Port 3002` to select another port, `-NoBrowser` to skip opening the browser,
+or `-DemoMode` to run without Foundry and Speech.
+
+To configure the environment manually instead:
+
 ```powershell
 npm install
 Copy-Item .env.example .env.local
