@@ -12,7 +12,7 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 - Revision-safe direct slide and narration editing
 - Contextual Foundry revisions expressed as validated typed patches
 - Optional MP4, WebM, or QuickTime demo-clip insertion
-- Azure AI Speech narration and FFmpeg-rendered captions
+- Passwordless Azure AI Speech narration and sentence-timed FFmpeg captions
 - Silent low-quality preview in local demo mode and narrated final MP4 with Azure Speech
 
 ## Requirements
@@ -28,10 +28,13 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 ```powershell
 npm install
 Copy-Item .env.example .env.local
+npm run preflight
 npm run dev
 ```
 
-Open `http://localhost:3000`. Without cloud configuration the app clearly identifies demo generation mode. Preview rendering still works, but final rendering requires Azure Speech.
+Open `http://127.0.0.1:3000`. The command starts both the loopback-only web application and a separate durable local render worker. Use `npm run dev:web` and `npm run worker` in separate terminals when debugging either process.
+
+Without Foundry configuration the app clearly identifies deterministic demo generation mode. A configured Foundry error never silently falls back. Preview rendering still works without Speech, but final rendering requires Azure Speech.
 
 ## Configuration
 
@@ -39,14 +42,16 @@ Open `http://localhost:3000`. Without cloud configuration the app clearly identi
 | --- | --- |
 | `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint |
 | `FOUNDRY_MODEL_DEPLOYMENT` | Deployed model name |
-| `NEXT_PUBLIC_FOUNDRY_CONFIGURED` | Set to `true` when the server variables above are configured |
-| `AZURE_SPEECH_KEY` | Azure AI Speech subscription key |
+| `AZURE_SPEECH_KEY` | Optional Azure AI Speech subscription-key fallback |
 | `AZURE_SPEECH_REGION` | Azure AI Speech region |
+| `AZURE_SPEECH_ENDPOINT` | Custom Speech resource endpoint; required for passwordless authentication |
+| `AZURE_SPEECH_RESOURCE_ID` | Full Azure resource ID; required to construct passwordless Speech authorization |
 | `AZURE_SPEECH_VOICE` | Optional voice; defaults to `en-US-AvaMultilingualNeural` |
+| `AZURE_SPEECH_USE_AZURE_CREDENTIAL` | Use passwordless Azure CLI identity; defaults to `true` |
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
 
-Use Azure managed identity for Foundry authentication in production. `DefaultAzureCredential` supports local Azure CLI login during development.
+Run `az login` locally. `DefaultAzureCredential` uses that identity for Foundry and, by default, Speech. Grant only the relevant Foundry inference access and the **Cognitive Services Speech User** role. Keep `.env.local` limited to non-secret endpoint, deployment, and region values where possible.
 
 ## Validation
 
@@ -57,12 +62,30 @@ npm run typecheck
 npm run build
 ```
 
+For the complete real two-minute self-presentation check:
+
+```powershell
+npm run acceptance:self
+```
+
+This invokes real Foundry generation and contextual revision, exercises the durable queue, synthesizes real Speech narration, renders the final MP4, validates streams/captions/duration/story coverage, and writes a non-secret report next to the MP4.
+
+To validate an existing completed UI render instead, run:
+
+```powershell
+npm run acceptance -- .data\projects.json <completed-render-id>
+```
+
+The first argument must be a JSON file containing the single project under test. The runner requires real Foundry/Speech configuration and writes a non-secret `acceptance-report.json` next to the completed MP4.
+
 ## Current MVP limits
 
-- Single-user deployment with file-backed persistence
+- Single-user localhost operation with file-backed persistence
 - Public GitHub repositories only
 - One optional demo clip
 - No PPTX import/export, accounts, sharing, or automatic browser recording
-- Rendering runs in the application process locally; production should route the same immutable render input to an Azure Container Apps Job
+- Rendering uses a separate durable local worker with three bounded retry attempts and manual retry
+- No deployment, public ingress, public storage URL, or non-loopback server binding
 
 See [product scope](docs/product.md), [architecture](docs/architecture.md), and [AI contracts](docs/ai-contracts.md).
+Review the [local security checklist](docs/security-checklist.md) before the demo.

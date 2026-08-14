@@ -8,7 +8,7 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 
 1. **Plan:** provide an idea and optional public GitHub URL, generate an evidence-aware outline, edit it, and approve it.
 2. **Create:** review the deck and narration together, edit fields directly or request a contextual AI revision, and approve the active revision.
-3. **Produce:** optionally add a demo clip, render a preview, then render and download a narrated final MP4.
+3. **Produce:** optionally add a validated demo clip, queue a background preview or final render, monitor progress/retries, then download the narrated MP4.
 
 ## Acceptance criteria
 
@@ -20,7 +20,9 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 - Public repository evidence retains its source path and commit SHA.
 - Final rendering cannot silently omit narration.
 - The product can generate its own two-minute pitch with an architecture slide, voiceover, captions, and downloadable MP4.
+- The app and worker operate only on localhost and call Azure services outbound from trusted server-side code.
 
 ## Non-goals
 
 Accounts, multi-tenancy, private repositories, PPTX round trips, automatic browser recording, unrestricted slide design, collaboration, and billing are deferred.
+Deployment, public ingress, public storage URLs, and non-loopback server binding are explicitly outside the hackathon MVP.
