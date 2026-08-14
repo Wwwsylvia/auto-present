@@ -48,10 +48,10 @@ review.
 
 ## Repository state
 
-The feature branch is `agents/azure-deployment-idea2impact`. Earlier verified
-checkpoints were pushed through `ede31cb`; the localhost-only acceptance
-checkpoint is intentionally local until the user explicitly requests another
-push. Generated media and session artifacts must not be committed.
+The local feature branch is `deployment-v1`. It has no configured upstream and
+has not been pushed under that name. The localhost-only acceptance and launcher
+checkpoints are intentionally local until the user explicitly requests a push.
+Generated media and session artifacts must not be committed.
 
 ## Recommended next work
 

@@ -95,9 +95,9 @@ RENDER_EXECUTION_MODE=local
 IDEA2IMPACT_DATA_DIR=<absolute-local-data-directory>
 ```
 
-Do not add credentials to the file. `DefaultAzureCredential` uses the Azure CLI
-session for Foundry and Speech. Start the application with `npm run dev` and open
-`http://localhost:3000`.
+Do not add credentials to the file. Foundry and managed-identity Speech
+authentication use `DefaultAzureCredential`, which can use the Azure CLI
+session.
 
 Alternatively, the checked-in launcher applies the provisioned non-secret
 endpoints, verifies Azure CLI authentication and local prerequisites, starts the
@@ -108,8 +108,12 @@ server, waits for health, and opens the browser:
 ```
 
 Use `-Port 3002`, `-DataDirectory <path>`, `-NoBrowser`, or `-DemoMode` as
-needed. The launcher does not store credentials; Azure SDK authentication still
-comes from the active Azure CLI session.
+needed. Use `-Build` for an optimized build and localhost production launch, or
+`-Production` to reuse an existing build. The launcher does not store
+credentials; Azure SDK authentication still comes from the active Azure CLI
+session. `-DemoMode` skips the launcher's provisioned service settings but does
+not clear values already supplied by the shell or `.env.local`. See
+[Build and launch](build-and-launch.md) for the complete workflow.
 
 ## Optional Container Apps Job rendering
 

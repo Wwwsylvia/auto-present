@@ -7,6 +7,10 @@ param(
 
     [switch]$DemoMode,
 
+    [switch]$Production,
+
+    [switch]$Build,
+
     [switch]$NoBrowser
 )
 
@@ -58,6 +62,9 @@ $env:PORT = $Port.ToString()
 $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
     Select-Object -First 1
 if ($listener) {
+    if ($Build) {
+        throw "Port $Port already hosts Idea2Impact. Stop it before rebuilding."
+    }
     $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 3
     if ($health.status -eq 'ok') {
         Write-Host "Idea2Impact is already running at $url"
@@ -69,14 +76,26 @@ if ($listener) {
     throw "Port $Port is already used by process $($listener.OwningProcess). Choose another port."
 }
 
+$useProductionServer = $Production -or $Build
+if ($Build) {
+    & npm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "The production build failed."
+    }
+}
+elseif ($Production -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot '.next\BUILD_ID'))) {
+    throw "No production build was found. Run with -Build or run 'npm run build' first."
+}
+
 $npmCommand = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
 if ([string]::IsNullOrWhiteSpace($npmCommand)) {
     $npmCommand = (Get-Command npm).Source
 }
 
+$npmScript = $useProductionServer ? 'start' : 'dev'
 $process = Start-Process `
     -FilePath $npmCommand `
-    -ArgumentList @('run', 'dev') `
+    -ArgumentList @('run', $npmScript) `
     -WorkingDirectory $repositoryRoot `
     -PassThru
 
@@ -103,6 +122,7 @@ if ($null -eq $health -or $health.status -ne 'ok') {
 Write-Host "Idea2Impact is running at $url"
 Write-Host "Process ID: $($process.Id)"
 Write-Host "Data directory: $DataDirectory"
+Write-Host "Server mode: $($useProductionServer ? 'production' : 'development')"
 Write-Host "Foundry: $($health.services.foundry); Speech: $($health.services.speech); Render mode: $($health.services.renderMode)"
 
 if (-not $NoBrowser) {

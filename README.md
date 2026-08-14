@@ -2,6 +2,11 @@
 
 Idea2Impact turns a rough project idea into a structured, editable presentation and a downloadable MP4. It is an MVP for hackathon teams that need to spend their final hours building rather than assembling slides and video.
 
+> **Localhost application:** The Idea2Impact website is designed and operated on
+> the developer's machine. Azure hosts backend AI, Speech, storage, image, and
+> optional render-job resources; it does not host a public website. The retained
+> web Container App has ingress disabled, no FQDN, and zero minimum replicas.
+
 ## What works
 
 - Guided brief with a required idea, audience, tone, and 1–10 minute target
@@ -23,30 +28,40 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 - For AI generation: a Microsoft Foundry project and model deployment
 - For narrated output: an Azure AI Speech resource
 
-## Run locally
+## Install and launch
 
-For the provisioned Azure-backed configuration, use the one-command launcher:
+From a checkout of the current `deployment-v1` branch, install dependencies:
 
 ```powershell
+npm install
+```
+
+Authenticate to Azure and launch the localhost development server:
+
+```powershell
+az login
 .\scripts\Start-Local.ps1
 ```
 
 It validates Node.js, npm, FFmpeg, Azure CLI authentication, starts the app in
 the background, waits for the health endpoint, and opens the browser. Use
 `-Port 3002` to select another port, `-NoBrowser` to skip opening the browser,
-or `-DemoMode` to run without Foundry and Speech.
+or `-DemoMode` to skip the launcher's provisioned Foundry and Speech settings.
+Existing shell variables or `.env.local` values can still configure those
+services.
 
-To configure the environment manually instead:
+Build and launch the optimized localhost production server with:
 
 ```powershell
-npm install
-Copy-Item .env.example .env.local
-npm run dev
+.\scripts\Start-Local.ps1 -Build
 ```
 
-Open `http://localhost:3000`. Without cloud configuration the app clearly identifies demo generation mode. Preview rendering still works, but final rendering requires Azure Speech.
+Subsequent production launches can use `.\scripts\Start-Local.ps1 -Production`
+without rebuilding. Open `http://localhost:3000`; this is always a local URL,
+including in production mode.
 
-The checked-in Azure deployment defaults to no web ingress. Use the application on localhost while retaining Foundry and Speech for server-side calls. Do not enable external Container Apps ingress unless authentication has been configured intentionally.
+For manual environment setup, complete build commands, health verification, data
+locations, and troubleshooting, see [Build and launch](docs/build-and-launch.md).
 
 ## Configuration
 
@@ -62,8 +77,13 @@ The checked-in Azure deployment defaults to no web ingress. Use the application 
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
 | `RENDER_EXECUTION_MODE` | `local` for localhost rendering or `container-apps-job` for cloud dispatch |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription containing the render job; required for cloud dispatch |
+| `AZURE_RESOURCE_GROUP` | Resource group containing the render job; required for cloud dispatch |
+| `AZURE_CONTAINER_APP_JOB_NAME` | Container Apps Job name; required for cloud dispatch |
 
-Use Azure managed identity for Foundry authentication in production. `DefaultAzureCredential` supports local Azure CLI login during development.
+Foundry and managed-identity Speech authentication use `DefaultAzureCredential`,
+which can use the local Azure CLI session. No cloud credential is sent to the
+browser.
 
 For the provisioned localhost-first Azure environment, including role assignments,
 image updates, job operations, costs, and teardown, see the
@@ -81,7 +101,7 @@ npm run build
 
 ## Current MVP limits
 
-- Single-user deployment with file-backed persistence
+- Single-user localhost application with file-backed persistence
 - Public GitHub repositories only
 - One optional demo clip
 - No PPTX import/export, accounts, sharing, or automatic browser recording
