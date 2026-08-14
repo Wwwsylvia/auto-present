@@ -8,9 +8,40 @@ import {
   type RevisionPatch,
   type Slide,
   revisionPatchSchema,
+  slideSchema,
 } from "@/lib/domain";
+import { z } from "zod";
 
 const promptVersion = "presentation-v1";
+
+export type FoundryChatRequest = {
+  model: string;
+  messages: Array<{ role: "system" | "user"; content: string }>;
+  response_format: { type: "json_object" };
+};
+
+export type FoundryChatCompletion = (
+  request: FoundryChatRequest,
+) => Promise<string | null | undefined>;
+
+export const generatedPresentationSchema = presentationRevisionSchema
+  .omit({
+    id: true,
+    version: true,
+    createdAt: true,
+    promptVersion: true,
+    source: true,
+    slides: true,
+  })
+  .extend({
+    slides: z.array(slideSchema.omit({ id: true })).min(3).max(20),
+  });
+
+const presentationSystemPrompt =
+  "You are the Idea2Impact presentation copilot. Return only valid JSON. Ground claims in supplied evidence, respect the exact duration budget, and create 3-12 concise slides.";
+
+const revisionSystemPrompt =
+  "Apply the user's request as the smallest possible set of structured slide changes. Return JSON with summary and slideChanges. Use only slide IDs provided. Never include unchanged fields.";
 
 function allocateDurations(slideCount: number, totalSeconds: number): number[] {
   const base = Math.floor(totalSeconds / slideCount);
@@ -114,15 +145,23 @@ export async function generatePresentation(project: Project): Promise<Presentati
     return createDemoRevision(project);
   }
 
-  const client = new AIProjectClient(endpoint, new DefaultAzureCredential());
-  const openAI = client.getOpenAIClient();
-  const response = await openAI.chat.completions.create({
+  return generatePresentationWithCompletion(
+    project,
+    deployment,
+    createAzureCompletion(endpoint),
+  );
+}
+
+export function buildPresentationRequest(
+  project: Project,
+  deployment: string,
+): FoundryChatRequest {
+  return {
     model: deployment,
     messages: [
       {
         role: "system",
-        content:
-          "You are the Idea2Impact presentation copilot. Return only valid JSON. Ground claims in supplied evidence, respect the exact duration budget, and create 3-12 concise slides.",
+        content: presentationSystemPrompt,
       },
       {
         role: "user",
@@ -152,10 +191,15 @@ export async function generatePresentation(project: Project): Promise<Presentati
       },
     ],
     response_format: { type: "json_object" },
-  });
-  const raw = response.choices[0]?.message.content;
+  };
+}
+
+export function parsePresentationResponse(
+  raw: string | null | undefined,
+  project: Project,
+): PresentationRevision {
   if (!raw) throw new Error("Microsoft Foundry returned an empty presentation");
-  const generated = JSON.parse(raw) as Omit<PresentationRevision, "id" | "version" | "createdAt" | "promptVersion" | "source">;
+  const generated = generatedPresentationSchema.parse(JSON.parse(raw));
   return presentationRevisionSchema.parse({
     ...generated,
     id: randomUUID(),
@@ -165,6 +209,15 @@ export async function generatePresentation(project: Project): Promise<Presentati
     source: "foundry",
     slides: generated.slides.map((slide) => ({ ...slide, id: randomUUID() })),
   });
+}
+
+export async function generatePresentationWithCompletion(
+  project: Project,
+  deployment: string,
+  complete: FoundryChatCompletion,
+): Promise<PresentationRevision> {
+  const raw = await complete(buildPresentationRequest(project, deployment));
+  return parsePresentationResponse(raw, project);
 }
 
 export async function generateRevisionPatch(
@@ -178,14 +231,27 @@ export async function generateRevisionPatch(
     throw new Error("Contextual AI revisions require Microsoft Foundry configuration");
   }
   if (!revision) throw new Error("Generate a presentation before requesting revisions");
-  const client = new AIProjectClient(endpoint, new DefaultAzureCredential());
-  const response = await client.getOpenAIClient().chat.completions.create({
+  return generateRevisionPatchWithCompletion(
+    project,
+    instruction,
+    deployment,
+    createAzureCompletion(endpoint),
+  );
+}
+
+export function buildRevisionRequest(
+  project: Project,
+  instruction: string,
+  deployment: string,
+): FoundryChatRequest {
+  const revision = project.revisions.find((item) => item.id === project.activeRevisionId);
+  if (!revision) throw new Error("Generate a presentation before requesting revisions");
+  return {
     model: deployment,
     messages: [
       {
         role: "system",
-        content:
-          "Apply the user's request as the smallest possible set of structured slide changes. Return JSON with summary and slideChanges. Use only slide IDs provided. Never include unchanged fields.",
+        content: revisionSystemPrompt,
       },
       {
         role: "user",
@@ -211,13 +277,39 @@ export async function generateRevisionPatch(
       },
     ],
     response_format: { type: "json_object" },
-  });
-  const raw = response.choices[0]?.message.content;
+  };
+}
+
+export function parseRevisionResponse(
+  raw: string | null | undefined,
+  project: Project,
+): RevisionPatch {
   if (!raw) throw new Error("Microsoft Foundry returned an empty revision");
   const patch = revisionPatchSchema.parse(JSON.parse(raw));
+  const revision = project.revisions.find((item) => item.id === project.activeRevisionId);
+  if (!revision) throw new Error("Generate a presentation before requesting revisions");
   const slideIds = new Set(revision.slides.map((slide) => slide.id));
   if (patch.slideChanges.some((change) => !slideIds.has(change.slideId))) {
     throw new Error("Microsoft Foundry referenced an unknown slide");
   }
   return patch;
+}
+
+export async function generateRevisionPatchWithCompletion(
+  project: Project,
+  instruction: string,
+  deployment: string,
+  complete: FoundryChatCompletion,
+): Promise<RevisionPatch> {
+  const raw = await complete(buildRevisionRequest(project, instruction, deployment));
+  return parseRevisionResponse(raw, project);
+}
+
+function createAzureCompletion(endpoint: string): FoundryChatCompletion {
+  const client = new AIProjectClient(endpoint, new DefaultAzureCredential());
+  const openAI = client.getOpenAIClient();
+  return async (request) => {
+    const response = await openAI.chat.completions.create(request);
+    return response.choices[0]?.message.content;
+  };
 }
