@@ -27,6 +27,8 @@ for (const variable of [
   "FOUNDRY_PROJECT_ENDPOINT",
   "FOUNDRY_MODEL_DEPLOYMENT",
   "AZURE_SPEECH_REGION",
+  "AZURE_SPEECH_ENDPOINT",
+  "AZURE_SPEECH_RESOURCE_ID",
 ]) {
   console.log(`${process.env[variable] ? "PASS" : "WARN"} ${variable}`);
 }
