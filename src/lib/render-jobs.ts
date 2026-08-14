@@ -163,7 +163,6 @@ async function startContainerAppsJob(id: string): Promise<void> {
   }
   const resource = jobResourceSchema.parse(await getResponse.json());
   const template = {
-    ...resource.properties.template,
     containers: resource.properties.template.containers.map((container) => ({
       ...container,
       env: [
@@ -177,7 +176,7 @@ async function startContainerAppsJob(id: string): Promise<void> {
     {
       method: "POST",
       headers,
-      body: JSON.stringify({ template }),
+      body: JSON.stringify(template),
     },
   );
   if (!startResponse.ok) {

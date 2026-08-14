@@ -19,7 +19,8 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 - AI revisions cannot reference unknown slides or write unvalidated fields.
 - Public repository evidence retains its source path and commit SHA.
 - Final rendering cannot silently omit narration.
-- The product can generate its own two-minute pitch with an architecture slide, voiceover, captions, and downloadable MP4.
+- Final captions use sentence-level Azure Speech timing rather than one planned cue per slide.
+- The product can generate its own two-minute pitch within 5 seconds of the target, with an architecture slide, voiceover, captions, and downloadable MP4.
 
 ## Non-goals
 

@@ -5,9 +5,10 @@
 - **Next.js web application:** project workflow, editor, API routes, validation, and local orchestration.
 - **Microsoft Foundry:** model inference for initial generation and contextual typed patches. `DefaultAzureCredential` keeps credentials server-side.
 - **GitHub:** bounded public metadata and selected manifest/README evidence. Repository content is untrusted data and is never inserted into system instructions.
-- **Azure AI Speech:** per-slide narration audio.
-- **FFmpeg:** deterministic slide composition, optional demo footage, audio, captions, and MP4 encoding.
+- **Azure AI Speech:** per-slide narration audio plus sentence boundary timing.
+- **FFmpeg worker:** deterministic slide composition, optional demo footage, explicitly mapped narration audio, sentence captions, and MP4 encoding.
 - **Persistence:** atomic JSON snapshots and file assets for this single-user MVP. Set `IDEA2IMPACT_DATA_DIR` to a mounted Azure Files volume in Container Apps.
+- **Azure Container Apps Job:** manual-trigger worker execution for one immutable render manifest. The web app starts jobs through managed identity and never waits for FFmpeg.
 
 ## Data flow
 
@@ -16,16 +17,20 @@
 3. Foundry receives the brief and bounded evidence and returns JSON that must satisfy the presentation schema.
 4. Every direct or AI edit creates an immutable revision. Approval records a specific revision ID.
 5. Rendering accepts only the currently approved deck revision.
-6. Slide visuals and caption files are generated deterministically. Speech audio is synthesized per slide, and FFmpeg joins the immutable segments.
-7. Editing marks completed render jobs stale.
+6. Rendering writes an immutable manifest and queued status to shared storage, then starts the Container Apps Job.
+7. Speech audio and sentence boundaries are generated per slide. FFmpeg maps narration explicitly, pads short segments to the approved duration without truncating speech, burns timed captions, and joins the immutable segments.
+8. The worker writes atomic progress/output status. The web app polls and reconciles it without allowing a stale job to become current again.
+9. Editing marks completed or active render jobs stale.
 
 ## Production topology
 
-Deploy the standalone Next.js image to Azure Container Apps with a persistent Azure Files mount. For scale, move `renderPresentation` into a Container Apps Job image and have the web application enqueue immutable render job IDs. Store media in Blob Storage and project metadata in PostgreSQL before introducing multiple users.
+Deploy one immutable image to a Next.js Container App and a manual-trigger Container Apps Job. Both mount the same Azure Files share. The app runs a single replica because project metadata remains JSON-backed, and it starts the Job through managed identity. External ingress is protected by Microsoft Entra authentication. Store media in Blob Storage and project metadata in PostgreSQL before introducing multiple users or replicas.
 
 ## Security properties
 
 - Foundry and Speech secrets never cross the browser boundary.
+- External web ingress requires Microsoft Entra authentication.
+- The web identity receives only Foundry inference and render-job read/start permissions.
 - Public GitHub URLs are restricted to canonical repository roots.
 - GitHub ingestion uses a small allowlist and hard context limit.
 - Model responses and patches are schema validated.

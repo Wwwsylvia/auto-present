@@ -6,6 +6,8 @@ The presentation copilot receives the brief, duration budget, optional normalize
 
 The active prompt contract is `presentation-v1`; the version and generation source are stored on every revision.
 
+Foundry transport is isolated from response parsing so fixture tests exercise empty output, malformed JSON, schema failures, evidence placement, and valid generation without weakening the runtime schema. An opt-in integration test runs the same contract against the configured deployment.
+
 ## Contextual revision
 
 Chat does not overwrite free-form documents. It returns:
@@ -28,6 +30,8 @@ Chat does not overwrite free-form documents. It returns:
 ```
 
 Unknown slide IDs, empty patches, invalid fields, and out-of-range values fail explicitly. Applying a patch creates a new immutable revision and invalidates approved output.
+
+The opt-in Foundry verification also requests a real contextual patch and asserts that every referenced slide ID belongs to the generated revision.
 
 ## Trust boundary
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { DefaultAzureCredential } from "@azure/identity";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 import sharp from "sharp";
 import {
@@ -110,13 +111,23 @@ function probeDuration(file: string, cwd: string): Promise<number> {
   });
 }
 
-function synthesize(text: string, outputFile: string): Promise<SpeechBoundary[]> {
+async function synthesize(text: string, outputFile: string): Promise<SpeechBoundary[]> {
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
-  if (!key || !region) {
+  if (!region) {
     return Promise.reject(new Error("Azure Speech is not configured"));
   }
-  const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
+  let speechConfig: SpeechSDK.SpeechConfig;
+  if (key) {
+    speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
+  } else if (process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true") {
+    const token = await new DefaultAzureCredential().getToken(
+      "https://cognitiveservices.azure.com/.default",
+    );
+    speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token.token, region);
+  } else {
+    throw new Error("Azure Speech requires a key or managed identity configuration");
+  }
   speechConfig.speechSynthesisVoiceName =
     process.env.AZURE_SPEECH_VOICE ?? "en-US-AvaMultilingualNeural";
   speechConfig.speechSynthesisOutputFormat =
@@ -168,9 +179,13 @@ export async function renderPresentation(
   const id = options.jobId ?? randomUUID();
   const jobDirectory = path.join(renderDirectory(), id);
   await fs.mkdir(jobDirectory, { recursive: true });
-  const hasSpeech = Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
+  const hasSpeech = Boolean(
+    process.env.AZURE_SPEECH_REGION &&
+      (process.env.AZURE_SPEECH_KEY ||
+        process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true"),
+  );
   if (kind === "final" && !hasSpeech) {
-    throw new Error("Configure AZURE_SPEECH_KEY and AZURE_SPEECH_REGION for a narrated final video");
+    throw new Error("Configure Azure Speech credentials and region for a narrated final video");
   }
 
   const segmentFiles: string[] = [];
@@ -207,7 +222,8 @@ export async function renderPresentation(
       await run(
         "ffmpeg",
         [
-          "-y", ...visualInput, "-i", audio, "-c:v", "libx264",
+          "-y", ...visualInput, "-i", audio, "-map", "0:v:0", "-map", "1:a:0",
+          "-c:v", "libx264",
           "-c:a", "aac", "-b:a", "160k", "-pix_fmt", "yuv420p",
           "-af", "apad", "-t", String(renderedDuration), "-vf", visualFilter, segment,
         ],
@@ -218,7 +234,8 @@ export async function renderPresentation(
         "ffmpeg",
         [
           "-y", ...visualInput, "-f", "lavfi", "-i",
-          "anullsrc=channel_layout=stereo:sample_rate=48000", "-t", String(duration),
+          "anullsrc=channel_layout=stereo:sample_rate=48000",
+          "-map", "0:v:0", "-map", "1:a:0", "-t", String(duration),
           "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-vf", visualFilter, segment,
         ],
         jobDirectory,
