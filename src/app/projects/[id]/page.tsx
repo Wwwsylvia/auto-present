@@ -20,7 +20,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <span>{project.input.durationMinutes} min</span>
         </div>
       </header>
-      <ProjectWorkspace initialProject={project} />
+      <ProjectWorkspace
+        foundryConfigured={Boolean(
+          process.env.FOUNDRY_PROJECT_ENDPOINT && process.env.FOUNDRY_MODEL_DEPLOYMENT,
+        )}
+        initialProject={project}
+      />
     </main>
   );
 }

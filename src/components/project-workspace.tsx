@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   actualDurationSeconds,
@@ -37,7 +37,13 @@ function SlidePreview({ slide }: { slide: Slide }) {
   );
 }
 
-export function ProjectWorkspace({ initialProject }: { initialProject: Project }) {
+export function ProjectWorkspace({
+  foundryConfigured,
+  initialProject,
+}: {
+  foundryConfigured: boolean;
+  initialProject: Project;
+}) {
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const revision = activeRevision(project);
@@ -49,6 +55,23 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
   const total = revision ? actualDurationSeconds(revision) : 0;
   const target = project.input.durationMinutes * 60;
   const durationStatus = Math.round(((total - target) / target) * 100);
+  const hasActiveRender = project.renderJobs.some(
+    (job) => job.status === "queued" || job.status === "rendering",
+  );
+
+  useEffect(() => {
+    if (!hasActiveRender) return;
+    const interval = window.setInterval(async () => {
+      const response = await fetch(`/api/projects/${project.id}`);
+      const body = await response.json();
+      if (!response.ok) {
+        setError(body.error ?? "Could not refresh render status");
+        return;
+      }
+      setProject(body);
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveRender, project.id]);
 
   async function invoke(endpoint: string) {
     setPending(endpoint);
@@ -171,7 +194,7 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
           {pending === "generate" ? "Analyzing and shaping..." : "Generate presentation plan"}
           <span>→</span>
         </button>
-        {!process.env.NEXT_PUBLIC_FOUNDRY_CONFIGURED && (
+        {!foundryConfigured && (
           <p className="mode-note">Demo generation mode · Configure Foundry to enable AI generation</p>
         )}
       </section>
@@ -230,7 +253,23 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
                   {pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span>
                 </button>
               </div>
-              {project.renderJobs.filter((job) => job.status === "complete").map((job) => (
+              {project.renderJobs
+                .filter(
+                  (job) =>
+                    job.revisionId === revision.id &&
+                    (job.status === "queued" ||
+                      job.status === "rendering" ||
+                      job.status === "failed"),
+                )
+                .map((job) => (
+                  <div className="render-result" key={job.id}>
+                    <span>{job.kind} · {job.status} · {job.progress}%</span>
+                    {job.error && <span className="error">{job.error}</span>}
+                  </div>
+                ))}
+              {project.renderJobs.filter(
+                (job) => job.status === "complete" && job.revisionId === revision.id,
+              ).map((job) => (
                 <div className="render-result" key={job.id}>
                   <span>{job.kind} · revision {revision.version}</span>
                   <a href={job.outputUrl}>Download MP4 ↓</a>

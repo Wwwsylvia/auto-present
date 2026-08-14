@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { uploadDirectory } from "@/lib/data-paths";
 import { updateProject } from "@/lib/store";
 
 const maxUploadSize = 100 * 1024 * 1024;
@@ -25,7 +26,7 @@ export async function POST(
   }
   const extension = path.extname(upload.name).toLowerCase() || ".mp4";
   const assetId = randomUUID();
-  const directory = path.join(process.cwd(), ".data", "uploads", id);
+  const directory = uploadDirectory(id);
   const localPath = path.join(directory, `${assetId}${extension}`);
   await fs.mkdir(directory, { recursive: true });
   await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
