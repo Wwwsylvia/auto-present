@@ -121,10 +121,14 @@ async function synthesize(text: string, outputFile: string): Promise<SpeechBound
   if (key) {
     speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
   } else if (process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true") {
-    const token = await new DefaultAzureCredential().getToken(
-      "https://cognitiveservices.azure.com/.default",
+    const endpoint = process.env.AZURE_SPEECH_ENDPOINT;
+    if (!endpoint) {
+      throw new Error("Managed identity Speech requires AZURE_SPEECH_ENDPOINT");
+    }
+    speechConfig = SpeechSDK.SpeechConfig.fromEndpoint(
+      new URL(endpoint),
+      new DefaultAzureCredential(),
     );
-    speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token.token, region);
   } else {
     throw new Error("Azure Speech requires a key or managed identity configuration");
   }
@@ -267,7 +271,7 @@ export async function renderPresentation(
     "ffmpeg",
     [
       "-y", "-i", "joined.mp4", "-vf",
-      "subtitles=captions.srt:force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'",
+      "subtitles=captions.srt:force_style='FontName=Arial,FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=10'",
       "-c:v", "libx264", "-preset", kind === "preview" ? "veryfast" : "medium",
       "-crf", kind === "preview" ? "27" : "20", "-c:a", "copy", output,
     ],

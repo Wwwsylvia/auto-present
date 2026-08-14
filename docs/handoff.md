@@ -2,87 +2,59 @@
 
 ## Current state
 
-The MVP implements a complete local workflow:
+Idea2Impact is complete as a localhost-first, Azure-backed MVP. The Next.js
+application runs locally while Microsoft Foundry provides typed generation and
+contextual revisions and Azure AI Speech provides narration with sentence
+timing. Final rendering can run locally or from an immutable manifest in the
+provisioned Azure Container Apps Job.
 
-1. Create a project from an idea, audience, tone, duration, and optional public GitHub URL.
-2. Generate a typed presentation using Microsoft Foundry when configured, or deterministic demo content otherwise.
-3. Review and directly edit slides and narration using immutable revisions.
-4. Request validated contextual revisions from Foundry.
-5. Approve the plan and deck through the Plan, Create, and Produce stages.
-6. Optionally upload a demo clip.
-7. Render and download a captioned MP4. Local previews can be silent; final output requires Azure AI Speech.
-
-The product is named **Idea2Impact**. The completed MVP was developed on `agents/idea2impact-mvp`.
+The provisioned web Container App has no ingress or FQDN and scales to zero.
+Do not expose it publicly unless the user explicitly changes the operating model
+and Entra authentication is configured first.
 
 ## Verified
 
-- `npm test`
-- `npm run lint`
-- `npm run typecheck`
-- `npm run build`
-- Browser inspection of the landing page and editor
-- End-to-end API flow from project creation through both approvals
-- Real FFmpeg preview render and MP4 download
+- Real GPT-5.4 mini generation and contextual typed revision
+- Fixture coverage for valid, empty, malformed, schema-invalid, and unsafe
+  Foundry responses
+- Immutable revision, expected-version, unknown-slide, and stale-render
+  protections
+- Managed-identity Azure Speech narration and sentence boundary timing
+- Explicit FFmpeg stream mapping, H.264/AAC output, and caption serialization
+- Asynchronous render manifests, worker startup, status persistence, UI polling,
+  and stale-job protection
+- Bicep deployment with disabled-by-default ingress and zero web replicas
+- Two-minute self-presentation acceptance at 120.042667 seconds with 16 caption
+  cues and an embedded workflow recording
+- Public endpoint removal verified in Azure
 
-## Configuration needed for a cloud-backed demo
+See the [Azure runbook](azure-runbook.md) for inventory and operations and the
+[acceptance report](acceptance.md) for identifiers, probe results, and manual
+review.
 
-Copy `.env.example` to `.env.local` and configure:
+## Known limitations
 
-- `FOUNDRY_PROJECT_ENDPOINT`
-- `FOUNDRY_MODEL_DEPLOYMENT`
-- `NEXT_PUBLIC_FOUNDRY_CONFIGURED=true`
-- `AZURE_SPEECH_KEY`
-- `AZURE_SPEECH_REGION`
-- Optionally `AZURE_SPEECH_VOICE` and `GITHUB_TOKEN`
+- Persistence is JSON/file-backed and intended for a single user.
+- Public GitHub repositories only; ingestion is bounded to selected files.
+- Container Apps Job status reconciliation needs another unattended cloud-mode
+  verification before it is treated as production reliable.
+- Captions can overlay footer content because they use fixed bottom placement.
+- Private repositories, accounts, collaboration, PPTX, and automatic browser
+  recording remain out of scope.
+- The Windows-generated npm lock metadata omits some Linux optional packages,
+  so the container currently installs npm 11 and uses `npm install`.
+- Entra app registration is blocked unless the tenant owner supplies a valid
+  internal `serviceManagementReference`; this is unnecessary for localhost.
 
-Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry. In Azure, use managed identity rather than storing Foundry credentials.
+## Repository state
 
-## Remaining work, in priority order
+The feature branch is `agents/azure-deployment-idea2impact`. Earlier verified
+checkpoints were pushed through `ede31cb`; the localhost-only acceptance
+checkpoint is intentionally local until the user explicitly requests another
+push. Generated media and session artifacts must not be committed.
 
-1. **Verify real Foundry generation**
-   - Exercise initial generation and contextual revisions against the selected deployed model.
-   - Confirm its JSON output consistently satisfies the Zod contracts.
-   - Add fixture-backed integration tests for Foundry failures and malformed output.
+## Recommended next work
 
-2. **Verify Azure Speech output**
-   - Generate a narrated two-minute video.
-   - Check voice quality, caption timing, final duration, and transitions.
-   - Decide whether captions should be split into sentence-level cues instead of one cue per slide.
-
-3. **Deploy to Azure**
-   - Provision the Foundry project/model, Speech, Container Apps environment, storage, and managed identity.
-   - Deploy the included Docker image.
-   - Mount persistent storage or replace file-backed persistence with PostgreSQL and Blob Storage.
-   - Move long-running rendering from the web request into a Container Apps Job before public use.
-
-4. **Run the self-presentation acceptance test**
-   - Have Idea2Impact create its own two-minute hackathon pitch.
-   - Require problem, use cases, solution, architecture, and visible Foundry usage.
-   - Add a short uploaded demo clip and export the final MP4.
-   - Record defects found during this run as the demo-polish backlog.
-
-5. **Improve production reliability**
-   - Add queued/background render status and retries.
-   - Validate uploaded videos with `ffprobe`, including duration and decodability.
-   - Add cleanup/retention for replaced uploads and obsolete renders.
-   - Add signed Blob Storage URLs when moving away from local files.
-   - Add Application Insights tracing and a judge-facing Foundry evaluation view.
-
-6. **Polish the editing experience**
-   - Add slide reorder, duplicate, delete, and slide-level regeneration.
-   - Add uploaded demo trim and fit controls.
-   - Add an embedded preview player rather than download-only output.
-   - Improve responsive behavior for narrower screens.
-
-## Known limitations and risks
-
-- Persistence is JSON/file-backed and intended for a single-user demo.
-- Rendering runs synchronously in a Next.js request; this can time out in hosted environments.
-- Public GitHub analysis is intentionally limited to selected root files.
-- Private repositories, accounts, sharing, PPTX, and automatic browser recording are out of scope.
-- `npm audit --omit=dev` currently reports advisories through the installed Next.js/PostCSS dependency chain. The suggested automatic fix downgrades Next.js to an incompatible old version; reassess when a patched compatible release is available.
-- Another worktree currently exists on `agents/idea2impact-presentation-generator`; inspect it before starting overlapping work.
-
-## Recommended next-session prompt
-
-> Configure and deploy the Idea2Impact MVP to Azure. Verify real Microsoft Foundry generation and contextual revisions, verify Azure Speech narration and caption timing, move rendering to a Container Apps Job, and complete the two-minute Idea2Impact self-presentation acceptance test. Preserve the current typed revision contracts and document every deployed Azure resource.
+1. Reverify Container Apps Job reconciliation if cloud rendering is needed.
+2. Add adaptive caption positioning and retention cleanup.
+3. Replace file persistence before enabling multiple users or replicas.

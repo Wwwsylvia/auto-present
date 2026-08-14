@@ -17,6 +17,8 @@ param(
 
     [string]$ContainerImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest',
 
+    [switch]$EnableExternalIngress,
+
     [ValidateRange(1, 1000)]
     [int]$ModelCapacity = 10,
 
@@ -87,6 +89,7 @@ $deploymentJson = (& az deployment group create `
         "imageRepository=$ImageRepository" `
         "imageTag=$ImageTag" `
         "containerImage=$ContainerImage" `
+        "enableExternalIngress=$($EnableExternalIngress.IsPresent.ToString().ToLowerInvariant())" `
         "modelCapacity=$ModelCapacity" `
     --query properties.outputs `
     --output json `

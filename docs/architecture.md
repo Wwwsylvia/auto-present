@@ -24,12 +24,12 @@
 
 ## Production topology
 
-Deploy one immutable image to a Next.js Container App and a manual-trigger Container Apps Job. Both mount the same Azure Files share. The app runs a single replica because project metadata remains JSON-backed, and it starts the Job through managed identity. External ingress is protected by Microsoft Entra authentication. Store media in Blob Storage and project metadata in PostgreSQL before introducing multiple users or replicas.
+The current operating mode runs the Next.js application on localhost and keeps Azure services available only for server-side calls. The provisioned web Container App has ingress disabled and is retained only as an optional deployment target. A manual-trigger Container Apps Job and Azure Files remain available for cloud rendering experiments. If hosted web access is intentionally enabled later, require Microsoft Entra authentication before sharing the endpoint. Store media in Blob Storage and project metadata in PostgreSQL before introducing multiple users or replicas.
 
 ## Security properties
 
 - Foundry and Speech secrets never cross the browser boundary.
-- External web ingress requires Microsoft Entra authentication.
+- External web ingress is disabled by default. If enabled later, Microsoft Entra authentication is required before the endpoint is shared.
 - The web identity receives only Foundry inference and render-job read/start permissions.
 - Public GitHub URLs are restricted to canonical repository roots.
 - GitHub ingestion uses a small allowlist and hard context limit.

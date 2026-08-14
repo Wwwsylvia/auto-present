@@ -33,20 +33,29 @@ npm run dev
 
 Open `http://localhost:3000`. Without cloud configuration the app clearly identifies demo generation mode. Preview rendering still works, but final rendering requires Azure Speech.
 
+The checked-in Azure deployment defaults to no web ingress. Use the application on localhost while retaining Foundry and Speech for server-side calls. Do not enable external Container Apps ingress unless authentication has been configured intentionally.
+
 ## Configuration
 
 | Variable | Purpose |
 | --- | --- |
 | `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint |
 | `FOUNDRY_MODEL_DEPLOYMENT` | Deployed model name |
-| `NEXT_PUBLIC_FOUNDRY_CONFIGURED` | Set to `true` when the server variables above are configured |
 | `AZURE_SPEECH_KEY` | Azure AI Speech subscription key |
 | `AZURE_SPEECH_REGION` | Azure AI Speech region |
+| `AZURE_SPEECH_ENDPOINT` | Custom Speech endpoint used with managed identity |
 | `AZURE_SPEECH_VOICE` | Optional voice; defaults to `en-US-AvaMultilingualNeural` |
+| `AZURE_SPEECH_USE_MANAGED_IDENTITY` | Set to `true` to use `DefaultAzureCredential` instead of a Speech key |
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
+| `RENDER_EXECUTION_MODE` | `local` for localhost rendering or `container-apps-job` for cloud dispatch |
 
 Use Azure managed identity for Foundry authentication in production. `DefaultAzureCredential` supports local Azure CLI login during development.
+
+For the provisioned localhost-first Azure environment, including role assignments,
+image updates, job operations, costs, and teardown, see the
+[Azure runbook](docs/azure-runbook.md). The verified self-presentation results are
+recorded in the [acceptance report](docs/acceptance.md).
 
 ## Validation
 
@@ -63,6 +72,6 @@ npm run build
 - Public GitHub repositories only
 - One optional demo clip
 - No PPTX import/export, accounts, sharing, or automatic browser recording
-- Rendering runs in the application process locally; production should route the same immutable render input to an Azure Container Apps Job
+- Rendering runs in the application process locally; the provisioned Azure Container Apps Job can execute the same immutable render input when cloud rendering is selected
 
 See [product scope](docs/product.md), [architecture](docs/architecture.md), and [AI contracts](docs/ai-contracts.md).

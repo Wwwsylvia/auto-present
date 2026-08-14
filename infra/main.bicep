@@ -20,6 +20,9 @@ param imageTag string = 'latest'
 @description('Fully qualified container image. Use the bootstrap image for the first deployment, then the immutable ACR image.')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+@description('Expose the web Container App through external ingress. Keep false for localhost-only operation.')
+param enableExternalIngress bool = false
+
 @description('Capacity in thousands of tokens per minute for the model deployment.')
 @minValue(1)
 param modelCapacity int = 10
@@ -292,6 +295,10 @@ var speechEnvironment = [
     value: location
   }
   {
+    name: 'AZURE_SPEECH_ENDPOINT'
+    value: 'https://${speech.name}.cognitiveservices.azure.com/'
+  }
+  {
     name: 'AZURE_SPEECH_VOICE'
     value: 'en-US-AvaMultilingualNeural'
   }
@@ -319,8 +326,16 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
   }
   properties: {
     environmentId: environment.id
-    configuration: {
+    configuration: union({
       activeRevisionsMode: 'Single'
+      registries: [
+        {
+          identity: webIdentity.id
+          server: registry.properties.loginServer
+        }
+      ]
+      secrets: webSecrets
+    }, enableExternalIngress ? {
       ingress: {
         allowInsecure: false
         external: true
@@ -333,14 +348,7 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
         ]
         transport: 'Auto'
       }
-      registries: [
-        {
-          identity: webIdentity.id
-          server: registry.properties.loginServer
-        }
-      ]
-      secrets: webSecrets
-    }
+    } : {})
     template: {
       containers: [
         {
@@ -387,7 +395,7 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
       ]
       scale: {
         maxReplicas: 1
-        minReplicas: 1
+        minReplicas: enableExternalIngress ? 1 : 0
       }
       volumes: [
         {
@@ -512,6 +520,6 @@ output webIdentityId string = webIdentity.id
 output jobIdentityId string = jobIdentity.id
 output webContainerAppId string = webApp.id
 output webContainerAppName string = webApp.name
-output webHost string = webApp.properties.configuration.ingress.fqdn
+output webHost string = enableExternalIngress ? webApp.properties.configuration.ingress.fqdn : ''
 output renderJobId string = renderJob.id
 output renderJobName string = renderJob.name
