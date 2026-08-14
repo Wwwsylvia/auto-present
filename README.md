@@ -2,6 +2,8 @@
 
 Idea2Impact turns a rough project idea into a structured, editable presentation and a downloadable MP4. It is an MVP for hackathon teams that need to spend their final hours building rather than assembling slides and video.
 
+> **Localhost-only:** Idea2Impact is designed to run on one developer machine. The web server binds to `127.0.0.1`, project data and media remain on the local filesystem, and the separate render worker runs locally. Do not deploy this MVP, expose it through public ingress, or publish its data directory. Microsoft Foundry, Azure AI Speech, and GitHub are outbound server-side dependencies only.
+
 ## What works
 
 - Guided brief with a required idea, audience, tone, and 1–10 minute target
@@ -23,18 +25,47 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 - For AI generation: a Microsoft Foundry project and model deployment
 - For narrated output: an Azure AI Speech resource
 
-## Run locally
+## Install and configure
 
 ```powershell
-npm install
+npm ci
 Copy-Item .env.example .env.local
 npm run preflight
+```
+
+Use `npm ci` for a reproducible install from `package-lock.json`. Edit `.env.local` only if Foundry, Speech narration, or authenticated GitHub access is needed. The deterministic presentation generator and silent preview rendering work without Azure configuration.
+
+## Launch for development
+
+```powershell
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`. The command starts both the loopback-only web application and a separate durable local render worker. Use `npm run dev:web` and `npm run worker` in separate terminals when debugging either process.
+Open `http://127.0.0.1:3000`. The command supervises both:
+
+- the Next.js development server, bound only to `127.0.0.1`; and
+- the separate durable local render worker.
+
+Press `Ctrl+C` in the launch terminal to stop both processes. To debug them independently, run `npm run dev:web` and `npm run worker` in separate terminals.
 
 Without Foundry configuration the app clearly identifies deterministic demo generation mode. A configured Foundry error never silently falls back. Preview rendering still works without Speech, but final rendering requires Azure Speech.
+
+## Build and launch the local production build
+
+Build the optimized Next.js application:
+
+```powershell
+npm ci
+npm run build
+```
+
+After a successful build, launch the built web application and local render worker:
+
+```powershell
+npm start
+```
+
+Then open `http://127.0.0.1:3000`. `npm start` remains localhost-only; “production build” describes the optimized Next.js build mode, not a hosted deployment. Press `Ctrl+C` to stop both processes.
 
 ## Configuration
 
@@ -81,11 +112,12 @@ The first argument must be a JSON file containing the single project under test.
 ## Current MVP limits
 
 - Single-user localhost operation with file-backed persistence
+- Development and built modes both bind the web server exclusively to `127.0.0.1`
 - Public GitHub repositories only
 - One optional demo clip
 - No PPTX import/export, accounts, sharing, or automatic browser recording
 - Rendering uses a separate durable local worker with three bounded retry attempts and manual retry
 - No deployment, public ingress, public storage URL, or non-loopback server binding
 
-See [product scope](docs/product.md), [architecture](docs/architecture.md), and [AI contracts](docs/ai-contracts.md).
+See [local build and operation](docs/local-operation.md), [product scope](docs/product.md), [architecture](docs/architecture.md), and [AI contracts](docs/ai-contracts.md).
 Review the [local security checklist](docs/security-checklist.md) before the demo.

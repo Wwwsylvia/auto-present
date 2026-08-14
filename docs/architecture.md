@@ -1,5 +1,7 @@
 # Architecture
 
+Idea2Impact is intentionally a **localhost-only, single-machine system**. “Production build” in this repository means an optimized local Next.js build started with `npm start`; it does not mean a hosted deployment.
+
 ## Runtime boundaries
 
 - **Loopback-only Next.js web application:** project workflow, editor, API routes, validation, and durable job enqueueing. It binds only to `127.0.0.1`.
@@ -23,7 +25,7 @@
 
 ## Local topology
 
-Run `npm run dev` to supervise the loopback Next.js process and the separate local worker. They coordinate only through the configured local data directory. Azure Foundry and Speech are outbound inference dependencies; the application does not provision resources, deploy containers, create ingress, expose storage URLs, or listen beyond loopback.
+Run `npm run dev` for development, or run `npm run build` followed by `npm start` for an optimized local build. Both launch modes supervise the loopback Next.js process and the separate local worker. They coordinate only through the configured local data directory. Azure Foundry and Speech are outbound inference dependencies; the application does not provision resources, deploy containers, create ingress, expose storage URLs, or listen beyond loopback.
 
 ## Security properties
 
