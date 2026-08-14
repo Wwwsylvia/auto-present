@@ -1,14 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 import sharp from "sharp";
+import { speechConfigured } from "@/lib/config";
 import { activeRevision, type Project, type RenderJob, type Slide } from "@/lib/domain";
+import { renderDirectory } from "@/lib/render-queue";
+import { sentenceCues, synthesizeSpeech } from "@/lib/speech";
 
-const outputRoot = process.env.IDEA2IMPACT_DATA_DIR
-  ? path.join(path.resolve(process.env.IDEA2IMPACT_DATA_DIR), "renders")
-  : path.join(process.cwd(), ".data", "renders");
 
 function escapeXml(value: string): string {
   return value
@@ -107,35 +105,6 @@ function probeDuration(file: string, cwd: string): Promise<number> {
   });
 }
 
-function synthesize(text: string, outputFile: string): Promise<void> {
-  const key = process.env.AZURE_SPEECH_KEY;
-  const region = process.env.AZURE_SPEECH_REGION;
-  if (!key || !region) {
-    return Promise.reject(new Error("Azure Speech is not configured"));
-  }
-  const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
-  speechConfig.speechSynthesisVoiceName =
-    process.env.AZURE_SPEECH_VOICE ?? "en-US-AvaMultilingualNeural";
-  speechConfig.speechSynthesisOutputFormat =
-    SpeechSDK.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm;
-  const audioConfig = SpeechSDK.AudioConfig.fromAudioFileOutput(outputFile);
-  const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, audioConfig);
-  return new Promise((resolve, reject) => {
-    synthesizer.speakTextAsync(
-      text,
-      (result) => {
-        synthesizer.close();
-        if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) resolve();
-        else reject(new Error(result.errorDetails || "Azure Speech synthesis failed"));
-      },
-      (error) => {
-        synthesizer.close();
-        reject(new Error(String(error)));
-      },
-    );
-  });
-}
-
 function srtTimestamp(seconds: number): string {
   const milliseconds = Math.round(seconds * 1000);
   const hours = Math.floor(milliseconds / 3_600_000);
@@ -148,20 +117,27 @@ function srtTimestamp(seconds: number): string {
 export async function renderPresentation(
   project: Project,
   kind: RenderJob["kind"],
-): Promise<{ job: RenderJob; outputPath: string }> {
+  id: string,
+  onProgress: (progress: number) => Promise<void> = async () => undefined,
+): Promise<{
+  outputPath: string;
+  durationSeconds: number;
+  captionCount: number;
+  usedDemoAsset: boolean;
+}> {
   const revision = activeRevision(project);
   if (!revision || project.approvedDeckRevisionId !== revision.id) {
     throw new Error("Approve the current deck before rendering");
   }
-  const id = randomUUID();
-  const jobDirectory = path.join(outputRoot, id);
+  const jobDirectory = renderDirectory(id);
   await fs.mkdir(jobDirectory, { recursive: true });
-  const hasSpeech = Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
+  const hasSpeech = speechConfigured();
   if (kind === "final" && !hasSpeech) {
-    throw new Error("Configure AZURE_SPEECH_KEY and AZURE_SPEECH_REGION for a narrated final video");
+    throw new Error("Configure Azure Speech authentication and AZURE_SPEECH_REGION for a narrated final video");
   }
 
   const segmentFiles: string[] = [];
+  let usedDemoAsset = false;
   let elapsed = 0;
   const captions: string[] = [];
   for (const [index, slide] of revision.slides.entries()) {
@@ -174,22 +150,52 @@ export async function renderPresentation(
       slide.layout === "demo"
         ? project.assets.find((asset) => asset.kind === "demo-video")
         : undefined;
+    usedDemoAsset ||= Boolean(demoAsset);
     const visualInput = demoAsset
       ? ["-stream_loop", "-1", "-i", demoAsset.localPath]
       : ["-loop", "1", "-i", image];
     const visualFilter = demoAsset
-      ? "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
-      : "scale=1280:720";
+      ? "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,setpts=PTS-STARTPTS"
+      : "scale=1280:720,fps=30,setpts=PTS-STARTPTS";
     if (hasSpeech) {
+      const rawAudio = `audio-${index}-raw.wav`;
       const audio = `audio-${index}.wav`;
-      await synthesize(slide.narration, path.join(jobDirectory, audio));
-      renderedDuration = await probeDuration(audio, jobDirectory);
+      const boundaries = await synthesizeSpeech(
+        slide.narration,
+        path.join(jobDirectory, rawAudio),
+      );
+      const speechDuration = await probeDuration(rawAudio, jobDirectory);
+      const audioFilter =
+        speechDuration > duration
+          ? `atempo=${(speechDuration / duration).toFixed(6)},apad`
+          : "apad";
+      await run(
+        "ffmpeg",
+        [
+          "-y",
+          "-i",
+          rawAudio,
+          "-af",
+          audioFilter,
+          "-t",
+          String(duration),
+          audio,
+        ],
+        jobDirectory,
+      );
+      renderedDuration = duration;
+      for (const cue of sentenceCues(slide.narration, renderedDuration, boundaries)) {
+        captions.push(
+          `${captions.length + 1}\n${srtTimestamp(elapsed + cue.startSeconds)} --> ${srtTimestamp(elapsed + cue.endSeconds)}\n${cue.text}\n`,
+        );
+      }
       await run(
         "ffmpeg",
         [
           "-y", ...visualInput, "-i", audio, "-c:v", "libx264",
           "-c:a", "aac", "-b:a", "160k", "-pix_fmt", "yuv420p",
-          "-shortest", "-vf", visualFilter, segment,
+          "-t", String(duration), "-vf", visualFilter,
+          "-video_track_timescale", "90000", segment,
         ],
         jobDirectory,
       );
@@ -199,16 +205,20 @@ export async function renderPresentation(
         [
           "-y", ...visualInput, "-f", "lavfi", "-i",
           "anullsrc=channel_layout=stereo:sample_rate=48000", "-t", String(duration),
-          "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-vf", visualFilter, segment,
+          "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-vf", visualFilter,
+          "-video_track_timescale", "90000", segment,
         ],
         jobDirectory,
       );
+      for (const cue of sentenceCues(slide.narration, renderedDuration, [])) {
+        captions.push(
+          `${captions.length + 1}\n${srtTimestamp(elapsed + cue.startSeconds)} --> ${srtTimestamp(elapsed + cue.endSeconds)}\n${cue.text}\n`,
+        );
+      }
     }
-    captions.push(
-      `${index + 1}\n${srtTimestamp(elapsed)} --> ${srtTimestamp(elapsed + renderedDuration)}\n${slide.narration}\n`,
-    );
     elapsed += renderedDuration;
     segmentFiles.push(segment);
+    await onProgress(Math.round(((index + 1) / (revision.slides.length + 1)) * 90));
   }
 
   await fs.writeFile(
@@ -233,20 +243,30 @@ export async function renderPresentation(
     ],
     jobDirectory,
   );
+  const intermediateFiles = [
+    ...segmentFiles,
+    "segments.txt",
+    "joined.mp4",
+    ...revision.slides.flatMap((_slide, index) => [
+      `slide-${index}.png`,
+      `audio-${index}.wav`,
+      `audio-${index}-raw.wav`,
+    ]),
+  ];
+  await Promise.all(
+    intermediateFiles.map((file) =>
+      fs.rm(path.join(jobDirectory, file), { force: true }),
+    ),
+  );
   return {
     outputPath: path.join(jobDirectory, output),
-    job: {
-      id,
-      revisionId: revision.id,
-      kind,
-      status: "complete",
-      progress: 100,
-      outputUrl: `/api/renders/${id}`,
-    },
+    durationSeconds: elapsed,
+    captionCount: captions.length,
+    usedDemoAsset,
   };
 }
 
 export function renderOutputPath(id: string): string {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid render ID");
-  return path.join(outputRoot, id, "presentation.mp4");
+  return path.join(renderDirectory(id), "presentation.mp4");
 }

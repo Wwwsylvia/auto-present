@@ -2,11 +2,15 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { activeRevision, updateSlideSchema } from "@/lib/domain";
 import { getProject, updateProject } from "@/lib/store";
+import { rejectNonLocalMutation } from "@/lib/http";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string; slideId: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id, slideId } = await params;
   const parsed = updateSlideSchema.safeParse({
     ...(await request.json()),
@@ -47,5 +51,6 @@ export async function PATCH(
       job.status === "complete" ? { ...job, status: "stale" as const } : job,
     ),
   }));
+  await invalidateRenderJobs(id, nextRevision.id);
   return NextResponse.json(updated);
 }

@@ -3,9 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/local-run.mjs dev",
+    "dev:web": "next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/local-run.mjs start",
+    "start:web": "next start --hostname 127.0.0.1",
+    "worker": "tsx src/worker/render-worker.ts",
+    "acceptance": "tsx scripts/acceptance.mts",
+    "acceptance:self": "tsx scripts/self-acceptance.mts",
+    "preflight": "node scripts/preflight.mjs",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
@@ -13,7 +19,6 @@
   "dependencies": {
     "@azure/ai-projects": "^2.4.0",
     "@azure/identity": "^4.13.1",
-    "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "next": "16.3.1-canary.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",

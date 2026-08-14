@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { NextResponse } from "next/server";
 import { renderOutputPath } from "@/lib/render";
+import { getRenderJob } from "@/lib/render-queue";
 
 export async function GET(
   _request: Request,
@@ -8,6 +9,10 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const job = await getRenderJob(id);
+    if (!job || job.status !== "complete") {
+      return NextResponse.json({ error: "Render not found" }, { status: 404 });
+    }
     const contents = await fs.readFile(renderOutputPath(id));
     return new NextResponse(contents, {
       headers: {

@@ -1,13 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { activeRevision } from "@/lib/domain";
+import {
+  activeRevision,
+  actualDurationSeconds,
+  presentationRevisionSchema,
+} from "@/lib/domain";
 import { generateRevisionPatch } from "@/lib/generate";
 import { getProject, updateProject } from "@/lib/store";
+import {
+  PublicError,
+  publicErrorResponse,
+  rejectNonLocalMutation,
+} from "@/lib/http";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const project = await getProject(id);
   const revision = project && activeRevision(project);
@@ -25,14 +37,24 @@ export async function POST(
   try {
     const patch = await generateRevisionPatch(project, instruction);
     const changes = new Map(patch.slideChanges.map((change) => [change.slideId, change.changes]));
-    const nextRevision = {
+    const nextRevision = presentationRevisionSchema.parse({
       ...revision,
       id: randomUUID(),
       version: revision.version + 1,
       createdAt: new Date().toISOString(),
       source: "foundry" as const,
       slides: revision.slides.map((slide) => ({ ...slide, ...changes.get(slide.id) })),
-    };
+    });
+    const targetDuration = project.input.durationMinutes * 60;
+    if (
+      Math.abs(actualDurationSeconds(nextRevision) - targetDuration) >
+      targetDuration * 0.1
+    ) {
+      throw new PublicError(
+        "Microsoft Foundry returned a revision outside the requested duration budget.",
+        502,
+      );
+    }
     const updated = await updateProject(id, (current) => ({
       ...current,
       revisions: [...current.revisions, nextRevision],
@@ -43,9 +65,9 @@ export async function POST(
       ),
       lastError: null,
     }));
+    await invalidateRenderJobs(id, nextRevision.id);
     return NextResponse.json({ project: updated, summary: patch.summary });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI revision failed";
-    return NextResponse.json({ error: message }, { status: 502 });
+    return publicErrorResponse(error, "AI revision failed. Check local service access and try again.", 502);
   }
 }

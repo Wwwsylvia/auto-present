@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   actualDurationSeconds,
@@ -37,7 +37,13 @@ function SlidePreview({ slide }: { slide: Slide }) {
   );
 }
 
-export function ProjectWorkspace({ initialProject }: { initialProject: Project }) {
+export function ProjectWorkspace({
+  foundryConfigured,
+  initialProject,
+}: {
+  foundryConfigured: boolean;
+  initialProject: Project;
+}) {
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const revision = activeRevision(project);
@@ -49,6 +55,20 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
   const total = revision ? actualDurationSeconds(revision) : 0;
   const target = project.input.durationMinutes * 60;
   const durationStatus = Math.round(((total - target) / target) * 100);
+  const activeRender = project.renderJobs.some((job) =>
+    ["queued", "rendering", "retrying"].includes(job.status),
+  );
+
+  useEffect(() => {
+    if (!activeRender) return;
+    const interval = window.setInterval(async () => {
+      const response = await fetch(`/api/projects/${project.id}`, {
+        cache: "no-store",
+      });
+      if (response.ok) setProject(await response.json());
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [activeRender, project.id]);
 
   async function invoke(endpoint: string) {
     setPending(endpoint);
@@ -78,8 +98,27 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
       setError(body.error ?? "Rendering failed");
       return;
     }
+
     setProject(body);
     router.refresh();
+  }
+
+  async function retryRender(id: string) {
+    setPending(`retry-${id}`);
+    setError("");
+    const response = await fetch(`/api/render-jobs/${id}/retry`, {
+      method: "POST",
+    });
+    const body = await response.json();
+    setPending("");
+    if (!response.ok) {
+      setError(body.error ?? "The render could not be retried");
+      return;
+    }
+    setProject((current) => ({
+      ...current,
+      renderJobs: current.renderJobs.map((job) => (job.id === id ? body : job)),
+    }));
   }
 
   async function saveSlide(formData: FormData) {
@@ -171,7 +210,7 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
           {pending === "generate" ? "Analyzing and shaping..." : "Generate presentation plan"}
           <span>→</span>
         </button>
-        {!process.env.NEXT_PUBLIC_FOUNDRY_CONFIGURED && (
+        {!foundryConfigured && (
           <p className="mode-note">Demo generation mode · Configure Foundry to enable AI generation</p>
         )}
       </section>
@@ -230,10 +269,28 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
                   {pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span>
                 </button>
               </div>
-              {project.renderJobs.filter((job) => job.status === "complete").map((job) => (
+              {project.renderJobs.filter((job) => job.status !== "stale").map((job) => (
                 <div className="render-result" key={job.id}>
-                  <span>{job.kind} · revision {revision.version}</span>
-                  <a href={job.outputUrl}>Download MP4 ↓</a>
+                  <span>
+                    {job.kind} · {job.status}
+                    {["rendering", "retrying"].includes(job.status)
+                      ? ` · ${job.progress}%`
+                      : ""}
+                  </span>
+                  {job.status === "complete" && job.outputUrl && (
+                    <a href={job.outputUrl}>Download MP4 ↓</a>
+                  )}
+                  {job.status === "failed" && (
+                    <button
+                      className="secondary"
+                      disabled={pending === `retry-${job.id}`}
+                      onClick={() => retryRender(job.id)}
+                      type="button"
+                    >
+                      {pending === `retry-${job.id}` ? "Retrying..." : "Retry render"}
+                    </button>
+                  )}
+                  {job.error && <small>{job.error}</small>}
                 </div>
               ))}
             </div>

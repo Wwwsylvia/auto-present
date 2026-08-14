@@ -2,16 +2,33 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { updateProject } from "@/lib/store";
+import { dataDirectory } from "@/lib/config";
+import {
+  publicErrorResponse,
+  rejectNonLocalMutation,
+} from "@/lib/http";
+import { probeMedia, validateDemoProbe } from "@/lib/media";
+import { getProject, updateProject } from "@/lib/store";
 
 const maxUploadSize = 100 * 1024 * 1024;
 const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const extensionsByType = new Map([
+  ["video/mp4", ".mp4"],
+  ["video/webm", ".webm"],
+  ["video/quicktime", ".mov"],
+]);
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
+  const existingProject = await getProject(id);
+  if (!existingProject) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
   const form = await request.formData();
   const upload = form.get("file");
   if (!(upload instanceof File)) {
@@ -23,13 +40,21 @@ export async function POST(
   if (upload.size <= 0 || upload.size > maxUploadSize) {
     return NextResponse.json({ error: "Demo videos must be under 100 MB" }, { status: 400 });
   }
-  const extension = path.extname(upload.name).toLowerCase() || ".mp4";
+  const extension = extensionsByType.get(upload.type);
+  if (!extension) {
+    return NextResponse.json({ error: "Unsupported demo video type" }, { status: 400 });
+  }
   const assetId = randomUUID();
-  const directory = path.join(process.cwd(), ".data", "uploads", id);
+  const directory = path.join(dataDirectory(), "uploads", id);
   const localPath = path.join(directory, `${assetId}${extension}`);
+  const temporaryPath = path.join(directory, `${assetId}.upload`);
   await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
+  await fs.writeFile(temporaryPath, Buffer.from(await upload.arrayBuffer()), {
+    flag: "wx",
+  });
   try {
+    validateDemoProbe(await probeMedia(temporaryPath));
+    await fs.rename(temporaryPath, localPath);
     const project = await updateProject(id, (current) => ({
       ...current,
       assets: [
@@ -37,17 +62,22 @@ export async function POST(
         {
           id: assetId,
           kind: "demo-video" as const,
-          name: upload.name,
+          name: path.basename(upload.name).slice(0, 255),
           mimeType: upload.type,
           size: upload.size,
           localPath,
         },
       ],
     }));
+    await Promise.all(
+      existingProject.assets
+        .filter((asset) => asset.kind === "demo-video" && asset.localPath !== localPath)
+        .map((asset) => fs.rm(asset.localPath, { force: true })),
+    );
     return NextResponse.json(project);
   } catch (error) {
+    await fs.rm(temporaryPath, { force: true });
     await fs.rm(localPath, { force: true });
-    const message = error instanceof Error ? error.message : "Upload failed";
-    return NextResponse.json({ error: message }, { status: 404 });
+    return publicErrorResponse(error, "Upload validation failed.", 400);
   }
 }

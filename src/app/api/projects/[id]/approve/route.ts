@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { activeRevision } from "@/lib/domain";
 import { getProject, updateProject } from "@/lib/store";
+import { rejectNonLocalMutation } from "@/lib/http";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const project = await getProject(id);
   const revision = project && activeRevision(project);

@@ -2,11 +2,17 @@ import { NextResponse } from "next/server";
 import { generatePresentation } from "@/lib/generate";
 import { inspectPublicRepository } from "@/lib/github";
 import { getProject, updateProject } from "@/lib/store";
+import {
+  publicErrorResponse,
+  rejectNonLocalMutation,
+} from "@/lib/http";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const project = await getProject(id);
   if (!project) {
@@ -28,8 +34,10 @@ export async function POST(
     }));
     return NextResponse.json(updated);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Generation failed";
-    await updateProject(id, (current) => ({ ...current, lastError: message }));
-    return NextResponse.json({ error: message }, { status: 502 });
+    await updateProject(id, (current) => ({
+      ...current,
+      lastError: "Generation failed. Review the error and try again.",
+    }));
+    return publicErrorResponse(error, "Generation failed. Check local service access and try again.", 502);
   }
 }
