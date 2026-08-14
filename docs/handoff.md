@@ -10,7 +10,7 @@ The MVP implements a complete local workflow:
 4. Request validated contextual revisions from Foundry.
 5. Approve the plan and deck through the Plan, Create, and Produce stages.
 6. Optionally upload a demo clip.
-7. Render and download a captioned MP4. Local previews can be silent; final output requires Azure AI Speech.
+7. Queue a durable background render and download a sentence-captioned MP4. Local previews can be silent; final output requires Azure AI Speech.
 
 The product is named **Idea2Impact**. The completed MVP was developed on `agents/idea2impact-mvp`.
 
@@ -23,6 +23,10 @@ The product is named **Idea2Impact**. The completed MVP was developed on `agents
 - Browser inspection of the landing page and editor
 - End-to-end API flow from project creation through both approvals
 - Real FFmpeg preview render and MP4 download
+- Local web/worker separation, durable queue retries, upload probing, and localhost request boundaries
+- Real Microsoft Foundry initial generation and contextual revision through the configured Idea2Impact project
+- Real passwordless Azure AI Speech narration through the signed-in Azure CLI identity
+- `npm run acceptance:self` on 2026-08-14: all checks passed, including required story coverage, architecture, explicit Foundry emphasis, generated demo footage, three-failure/manual-retry recovery, audio/video streams, 30 bounded caption cues, and a 120.04-second MP4
 
 ## Configuration needed for a cloud-backed demo
 
@@ -30,45 +34,15 @@ Copy `.env.example` to `.env.local` and configure:
 
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `FOUNDRY_MODEL_DEPLOYMENT`
-- `NEXT_PUBLIC_FOUNDRY_CONFIGURED=true`
-- `AZURE_SPEECH_KEY`
 - `AZURE_SPEECH_REGION`
+- Optionally `AZURE_SPEECH_KEY` as a fallback
 - Optionally `AZURE_SPEECH_VOICE` and `GITHUB_TOKEN`
 
-Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry. In Azure, use managed identity rather than storing Foundry credentials.
+Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry and Speech. Grant only model inference access and Cognitive Services Speech User. This MVP must not be deployed.
 
 ## Remaining work, in priority order
 
-1. **Verify real Foundry generation**
-   - Exercise initial generation and contextual revisions against the selected deployed model.
-   - Confirm its JSON output consistently satisfies the Zod contracts.
-   - Add fixture-backed integration tests for Foundry failures and malformed output.
-
-2. **Verify Azure Speech output**
-   - Generate a narrated two-minute video.
-   - Check voice quality, caption timing, final duration, and transitions.
-   - Decide whether captions should be split into sentence-level cues instead of one cue per slide.
-
-3. **Deploy to Azure**
-   - Provision the Foundry project/model, Speech, Container Apps environment, storage, and managed identity.
-   - Deploy the included Docker image.
-   - Mount persistent storage or replace file-backed persistence with PostgreSQL and Blob Storage.
-   - Move long-running rendering from the web request into a Container Apps Job before public use.
-
-4. **Run the self-presentation acceptance test**
-   - Have Idea2Impact create its own two-minute hackathon pitch.
-   - Require problem, use cases, solution, architecture, and visible Foundry usage.
-   - Add a short uploaded demo clip and export the final MP4.
-   - Record defects found during this run as the demo-polish backlog.
-
-5. **Improve production reliability**
-   - Add queued/background render status and retries.
-   - Validate uploaded videos with `ffprobe`, including duration and decodability.
-   - Add cleanup/retention for replaced uploads and obsolete renders.
-   - Add signed Blob Storage URLs when moving away from local files.
-   - Add Application Insights tracing and a judge-facing Foundry evaluation view.
-
-6. **Polish the editing experience**
+1. **Polish the editing experience**
    - Add slide reorder, duplicate, delete, and slide-level regeneration.
    - Add uploaded demo trim and fit controls.
    - Add an embedded preview player rather than download-only output.
@@ -77,12 +51,13 @@ Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry. 
 ## Known limitations and risks
 
 - Persistence is JSON/file-backed and intended for a single-user demo.
-- Rendering runs synchronously in a Next.js request; this can time out in hosted environments.
+- The MVP is intentionally localhost-only and is not suitable for hosted or multi-user operation.
 - Public GitHub analysis is intentionally limited to selected root files.
 - Private repositories, accounts, sharing, PPTX, and automatic browser recording are out of scope.
+- Acceptance media and reports remain local under `.data/acceptance` and are intentionally ignored by Git.
 - `npm audit --omit=dev` currently reports advisories through the installed Next.js/PostCSS dependency chain. The suggested automatic fix downgrades Next.js to an incompatible old version; reassess when a patched compatible release is available.
 - Another worktree currently exists on `agents/idea2impact-presentation-generator`; inspect it before starting overlapping work.
 
 ## Recommended next-session prompt
 
-> Configure and deploy the Idea2Impact MVP to Azure. Verify real Microsoft Foundry generation and contextual revisions, verify Azure Speech narration and caption timing, move rendering to a Container Apps Job, and complete the two-minute Idea2Impact self-presentation acceptance test. Preserve the current typed revision contracts and document every deployed Azure resource.
+> Configure local Foundry and Speech access with `az login`, run the two-minute Idea2Impact self-presentation acceptance test, and record the real-service report. Keep the web and worker loopback-only and do not deploy, push, or merge.
