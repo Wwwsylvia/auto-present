@@ -6,9 +6,21 @@ function isLoopback(hostname: string): boolean {
   return loopbackHosts.has(hostname.toLowerCase());
 }
 
-export function rejectNonLocalMutation(request: Request): NextResponse | undefined {
+export function rejectNonLocalRequest(request: Request): NextResponse | undefined {
   const requestUrl = new URL(request.url);
-  if (!isLoopback(requestUrl.hostname)) {
+  const host = request.headers.get("host");
+  let hostUrl: URL | undefined;
+  try {
+    hostUrl = host ? new URL(`${requestUrl.protocol}//${host}`) : undefined;
+  } catch {
+    hostUrl = undefined;
+  }
+  if (
+    !isLoopback(requestUrl.hostname) ||
+    !hostUrl ||
+    !isLoopback(hostUrl.hostname) ||
+    hostUrl.origin !== requestUrl.origin
+  ) {
     return NextResponse.json(
       { error: "Idea2Impact only accepts local requests" },
       { status: 403 },
@@ -37,6 +49,8 @@ export function rejectNonLocalMutation(request: Request): NextResponse | undefin
     );
   }
 }
+
+export const rejectNonLocalMutation = rejectNonLocalRequest;
 
 function secretValues(): string[] {
   return [

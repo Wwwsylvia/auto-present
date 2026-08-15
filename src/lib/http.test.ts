@@ -1,24 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { redactSensitive, rejectNonLocalMutation } from "@/lib/http";
+import { redactSensitive, rejectNonLocalRequest } from "@/lib/http";
 
 test("accepts loopback same-origin mutations", () => {
   const request = new Request("http://127.0.0.1:3000/api/projects", {
     method: "POST",
-    headers: { Origin: "http://127.0.0.1:3000" },
+    headers: {
+      Host: "127.0.0.1:3000",
+      Origin: "http://127.0.0.1:3000",
+    },
   });
-  assert.equal(rejectNonLocalMutation(request), undefined);
+  assert.equal(rejectNonLocalRequest(request), undefined);
 });
 
-test("rejects non-loopback and cross-origin mutations", () => {
+test("rejects non-loopback, forged Host, and cross-origin requests", () => {
   assert.equal(
-    rejectNonLocalMutation(new Request("http://192.168.1.10:3000/api/projects"))?.status,
+    rejectNonLocalRequest(
+      new Request("http://192.168.1.10:3000/api/projects", {
+        headers: { Host: "192.168.1.10:3000" },
+      }),
+    )?.status,
     403,
   );
   assert.equal(
-    rejectNonLocalMutation(
+    rejectNonLocalRequest(
       new Request("http://127.0.0.1:3000/api/projects", {
-        headers: { Origin: "https://example.com" },
+        headers: { Host: "attacker.example:3000" },
+      }),
+    )?.status,
+    403,
+  );
+  assert.equal(
+    rejectNonLocalRequest(
+      new Request("http://127.0.0.1:3000/api/projects", {
+        headers: {
+          Host: "127.0.0.1:3000",
+          Origin: "https://example.com",
+        },
       }),
     )?.status,
     403,

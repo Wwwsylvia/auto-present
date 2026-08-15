@@ -55,7 +55,7 @@ Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry a
 ## Known limitations and risks
 
 - Persistence is JSON/file-backed and intended for a single-user demo.
-- The MVP is intentionally localhost-only and is not suitable for hosted or multi-user operation.
+- The MVP is intentionally localhost-only and is not suitable for hosted or multi-user operation. It accepts data-bearing API requests only through literal loopback hosts (`localhost`, `127.0.0.1`, or `[::1]`), not custom local DNS names.
 - Public GitHub analysis is intentionally limited to selected root files.
 - Private repositories, accounts, sharing, PPTX, and automatic browser recording are out of scope.
 - Acceptance media and reports remain local under `.data/acceptance` and are intentionally ignored by Git.

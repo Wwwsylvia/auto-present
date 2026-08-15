@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createProjectSchema } from "@/lib/domain";
 import { createProject, listProjects } from "@/lib/store";
-import { rejectNonLocalMutation } from "@/lib/http";
+import { rejectNonLocalMutation, rejectNonLocalRequest } from "@/lib/http";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const rejection = rejectNonLocalRequest(request);
+  if (rejection) return rejection;
   return NextResponse.json(await listProjects());
 }
 

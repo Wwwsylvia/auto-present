@@ -1,16 +1,16 @@
 import { spawnSync } from "node:child_process";
 
-const commands = [
+const requiredCommands = [
   ["node", ["--version"]],
   ["ffmpeg", ["-version"]],
   ["ffprobe", ["-version"]],
-  [
-    process.platform === "win32" ? "az.cmd" : "az",
-    ["account", "show", "--query", "{name:name,user:user.name}", "-o", "json"],
-  ],
 ];
+const optionalCommands = [[
+  process.platform === "win32" ? "az.cmd" : "az",
+  ["account", "show", "--query", "{name:name,user:user.name}", "-o", "json"],
+]];
 let failed = false;
-for (const [command, args] of commands) {
+for (const [command, args] of requiredCommands) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
     windowsHide: true,
@@ -22,6 +22,14 @@ for (const [command, args] of commands) {
   } else {
     console.log(`PASS ${command}`);
   }
+}
+for (const [command, args] of optionalCommands) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    windowsHide: true,
+    shell: process.platform === "win32",
+  });
+  console.log(`${result.status === 0 ? "PASS" : "WARN"} ${command} (optional)`);
 }
 for (const variable of [
   "FOUNDRY_PROJECT_ENDPOINT",

@@ -3,6 +3,7 @@ import {
   completeRenderJob,
   failRenderJob,
   heartbeatRenderJob,
+  RenderClaimLostError,
   releaseRenderLock,
 } from "@/lib/render-queue";
 import { renderPresentation } from "@/lib/render";
@@ -18,15 +19,21 @@ function delay(milliseconds: number): Promise<void> {
 async function processNext(): Promise<boolean> {
   const record = await claimNextRenderJob();
   if (!record) return false;
+  const claimToken = record.claimToken;
+  if (!claimToken) throw new Error("Claimed render job is missing its claim token");
   try {
     await renderPresentation(
       record.project,
       record.job.kind,
       record.job.id,
-      (progress) => heartbeatRenderJob(record.job.id, progress),
+      (progress) => heartbeatRenderJob(record.job.id, claimToken, progress),
     );
-    await completeRenderJob(record.job.id);
+    await completeRenderJob(record.job.id, claimToken);
   } catch (error) {
+    if (error instanceof RenderClaimLostError) {
+      console.log(`[Idea2Impact worker] Render ${record.job.id} was invalidated`);
+      return true;
+    }
     const detail =
       error instanceof Error ? redactSensitive(error.message) : "Rendering failed";
     console.error(`[Idea2Impact worker] ${detail}`);
@@ -36,10 +43,13 @@ async function processNext(): Promise<boolean> {
         : "Render attempt failed. Verify FFmpeg and local service configuration.";
     await failRenderJob(
       record.job.id,
+      claimToken,
       message.length <= 300 ? message : "Rendering failed. Check local worker logs.",
-    );
+    ).catch((failure) => {
+      if (!(failure instanceof RenderClaimLostError)) throw failure;
+    });
   } finally {
-    await releaseRenderLock(record.job.id);
+    await releaseRenderLock(record.job.id, claimToken);
   }
   return true;
 }

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getProject, updateProject } from "@/lib/store";
-import { createRenderJob, enqueueRender } from "@/lib/render-queue";
+import {
+  activateRenderJob,
+  createRenderJob,
+  discardDeferredRenderJob,
+  enqueueRender,
+} from "@/lib/render-queue";
 import {
   publicErrorResponse,
   rejectNonLocalMutation,
@@ -19,16 +24,28 @@ export async function POST(
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as { kind?: string };
   const kind = body.kind === "final" ? "final" : "preview";
+  let deferredJobId: string | undefined;
+  let projectPersisted = false;
   try {
-    const record = createRenderJob(project, kind);
-    await enqueueRender(record);
-    const updated = await updateProject(id, (current) => ({
-      ...current,
-      renderJobs: [...current.renderJobs, record.job],
-      lastError: null,
-    }));
+    const updated = await updateProject(id, async (current) => {
+      const record = createRenderJob(current, kind);
+      await enqueueRender(record, { deferClaim: true });
+      deferredJobId = record.job.id;
+      return {
+        ...current,
+        renderJobs: [...current.renderJobs, record.job],
+        lastError: null,
+      };
+    });
+    projectPersisted = true;
+    if (!deferredJobId) throw new Error("Deferred render job was not created");
+    await activateRenderJob(deferredJobId);
+    deferredJobId = undefined;
     return NextResponse.json(updated, { status: 202 });
   } catch (error) {
+    if (deferredJobId && !projectPersisted) {
+      await discardDeferredRenderJob(deferredJobId);
+    }
     await updateProject(id, (current) => ({
       ...current,
       lastError: "Could not queue the render.",

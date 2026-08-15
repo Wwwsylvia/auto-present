@@ -8,7 +8,7 @@ Idea2Impact is intentionally a **localhost-only, single-machine system**. “Pro
 - **Microsoft Foundry:** model inference for initial generation and contextual typed patches. `DefaultAzureCredential` keeps credentials server-side.
 - **GitHub:** bounded public metadata and selected manifest/README evidence. Repository content is untrusted data and is never inserted into system instructions.
 - **Azure AI Speech:** outbound, server-side per-slide narration using passwordless Azure CLI identity by default.
-- **Local render worker:** a separate process atomically claims durable jobs, synthesizes narration, invokes FFmpeg, and persists progress. Transient failures receive three bounded attempts before manual retry.
+- **Local render worker:** a separate process atomically claims durable jobs with a unique lease token, synthesizes narration, invokes FFmpeg, and persists progress. Every heartbeat and terminal transition must present the current token. Transient failures receive three bounded attempts before manual retry.
 - **FFmpeg/FFprobe:** deterministic slide composition, validated optional demo footage, audio, sentence-level captions, MP4 encoding, and media verification.
 - **Persistence:** atomic JSON snapshots, durable queue records, and local file assets for this single-user MVP under `IDEA2IMPACT_DATA_DIR`.
 
@@ -19,9 +19,9 @@ Idea2Impact is intentionally a **localhost-only, single-machine system**. “Pro
 3. Foundry receives the brief and bounded evidence and returns JSON that must satisfy the presentation schema.
 4. Every direct or AI edit creates an immutable revision. Approval records a specific revision ID.
 5. Rendering accepts only the currently approved deck revision.
-6. The API persists an immutable render job and returns immediately; the browser polls status.
+6. The API persists an immutable render job in a deferred, non-claimable state while atomically updating project metadata. It activates the job only after that metadata is durable, and removes the deferred record if project persistence fails.
 7. The local worker atomically claims the job. Slide visuals and sentence-level captions are generated deterministically, Speech audio is synthesized per slide, and FFmpeg joins the immutable segments.
-8. Editing marks incompatible render jobs stale and removes obsolete output.
+8. Editing or replacing a render-affecting asset atomically revokes incompatible claims, marks those jobs stale, and removes obsolete output. A revoked worker cannot subsequently complete, fail, or retry that job.
 
 ## Local topology
 
@@ -30,7 +30,7 @@ Run `npm run dev` for development, or run `npm run build` followed by `npm start
 ## Security properties
 
 - Foundry and Speech secrets never cross the browser boundary.
-- Mutation routes reject non-loopback, cross-origin, and cross-site requests.
+- All data-bearing API routes reject non-loopback request URLs and `Host` headers. Browser mutations and reads also reject non-loopback origins and cross-site requests, preventing DNS-rebinding access to local project data.
 - Public GitHub URLs are restricted to canonical repository roots.
 - GitHub ingestion uses a small allowlist and hard context limit.
 - Model responses and patches are schema validated.

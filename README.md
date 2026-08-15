@@ -2,7 +2,7 @@
 
 Idea2Impact turns a rough project idea into a structured, editable presentation and a downloadable MP4. It is an MVP for hackathon teams that need to spend their final hours building rather than assembling slides and video.
 
-> **Localhost-only:** Idea2Impact is designed to run on one developer machine. The web server binds to `127.0.0.1`, project data and media remain on the local filesystem, and the separate render worker runs locally. Do not deploy this MVP, expose it through public ingress, or publish its data directory. Microsoft Foundry, Azure AI Speech, and GitHub are outbound server-side dependencies only.
+> **Localhost-only:** Idea2Impact is designed to run on one developer machine. The web server binds to `127.0.0.1`; every data-bearing API request also requires a loopback `Host`, and browser requests must remain same-origin. Project data and media remain on the local filesystem, and the separate render worker runs locally. Do not deploy this MVP, expose it through public ingress, use a hostname that resolves to loopback, or publish its data directory. Microsoft Foundry, Azure AI Speech, and GitHub are outbound server-side dependencies only.
 
 ## What works
 
@@ -22,6 +22,7 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 - Node.js 22+
 - npm 11+
 - FFmpeg available on `PATH`
+- Optional: Azure CLI for passwordless Foundry or Speech access
 - For AI generation: a Microsoft Foundry project and model deployment
 - For narrated output: an Azure AI Speech resource
 
@@ -82,7 +83,7 @@ Then open `http://127.0.0.1:3000`. `npm start` remains localhost-only; “produc
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
 
-Run `az login` locally. `DefaultAzureCredential` uses that identity for Foundry and, by default, Speech. Grant only the relevant Foundry inference access and the **Cognitive Services Speech User** role. Keep `.env.local` limited to non-secret endpoint, deployment, and region values where possible.
+When using passwordless Foundry or Speech, install Azure CLI and run `az login` locally. `DefaultAzureCredential` uses that identity. Azure CLI is not required for deterministic generation, silent previews, or Speech configured with `AZURE_SPEECH_KEY`. Grant only the relevant Foundry inference access and the **Cognitive Services Speech User** role. Keep `.env.local` limited to non-secret endpoint, deployment, and region values where possible.
 
 ## Validation
 
@@ -116,7 +117,7 @@ The first argument must be a JSON file containing the single project under test.
 - Public GitHub repositories only
 - One optional demo clip
 - No PPTX import/export, accounts, sharing, or automatic browser recording
-- Rendering uses a separate durable local worker with three bounded retry attempts and manual retry
+- Rendering uses a separate durable local worker with three bounded retry attempts and manual retry; edits and asset replacement revoke active claims so obsolete workers cannot publish, fail, or retry stale output
 - No deployment, public ingress, public storage URL, or non-loopback server binding
 
 See [local build and operation](docs/local-operation.md), [product scope](docs/product.md), [architecture](docs/architecture.md), and [AI contracts](docs/ai-contracts.md).

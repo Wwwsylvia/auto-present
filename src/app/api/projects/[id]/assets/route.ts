@@ -8,6 +8,8 @@ import {
   rejectNonLocalMutation,
 } from "@/lib/http";
 import { probeMedia, validateDemoProbe } from "@/lib/media";
+import { removeFilesBestEffort, runBestEffort } from "@/lib/local-files";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 import { getProject, updateProject } from "@/lib/store";
 
 const maxUploadSize = 100 * 1024 * 1024;
@@ -52,10 +54,11 @@ export async function POST(
   await fs.writeFile(temporaryPath, Buffer.from(await upload.arrayBuffer()), {
     flag: "wx",
   });
+  let project: Awaited<ReturnType<typeof updateProject>>;
   try {
     validateDemoProbe(await probeMedia(temporaryPath));
     await fs.rename(temporaryPath, localPath);
-    const project = await updateProject(id, (current) => ({
+    project = await updateProject(id, (current) => ({
       ...current,
       assets: [
         ...current.assets.filter((asset) => asset.kind !== "demo-video"),
@@ -68,16 +71,27 @@ export async function POST(
           localPath,
         },
       ],
+      renderJobs: current.renderJobs.map((job) => ({
+        ...job,
+        status: "stale" as const,
+        progress: 0,
+        outputUrl: undefined,
+        error: undefined,
+      })),
     }));
-    await Promise.all(
-      existingProject.assets
-        .filter((asset) => asset.kind === "demo-video" && asset.localPath !== localPath)
-        .map((asset) => fs.rm(asset.localPath, { force: true })),
-    );
-    return NextResponse.json(project);
   } catch (error) {
     await fs.rm(temporaryPath, { force: true });
     await fs.rm(localPath, { force: true });
     return publicErrorResponse(error, "Upload validation failed.", 400);
   }
+  await runBestEffort(
+    "Could not invalidate every obsolete render after replacing the demo upload",
+    () => invalidateRenderJobs(id, ""),
+  );
+  await removeFilesBestEffort(
+    existingProject.assets
+      .filter((asset) => asset.kind === "demo-video" && asset.localPath !== localPath)
+      .map((asset) => asset.localPath),
+  );
+  return NextResponse.json(project);
 }

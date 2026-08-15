@@ -151,7 +151,12 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
   recoveryVerified &&=
     claimedRecovery?.job.id === recoveryRecord.job.id &&
     claimedRecovery.job.attempts === attempt;
-  await failRenderJob(recoveryRecord.job.id, "Injected acceptance failure");
+  if (!claimedRecovery?.claimToken) throw new Error("Recovery claim token missing");
+  await failRenderJob(
+    recoveryRecord.job.id,
+    claimedRecovery.claimToken,
+    "Injected acceptance failure",
+  );
 }
 recoveryVerified &&=
   (await getRenderJob(recoveryRecord.job.id))?.status === "failed";
@@ -169,17 +174,19 @@ const claimed = await claimNextRenderJob();
 if (!claimed || claimed.job.id !== record.job.id) {
   throw new Error("The durable worker queue did not claim the acceptance render");
 }
+if (!claimed.claimToken) throw new Error("Acceptance render claim token missing");
 
 console.log("Rendering narrated final MP4 with Azure Speech...");
 let renderResult: Awaited<ReturnType<typeof renderPresentation>>;
 try {
   renderResult = await renderPresentation(project, "final", record.job.id, (progress) =>
-    heartbeatRenderJob(record.job.id, progress),
+    heartbeatRenderJob(record.job.id, claimed.claimToken ?? "", progress),
   );
-  await completeRenderJob(record.job.id);
+  await completeRenderJob(record.job.id, claimed.claimToken);
 } catch (error) {
   await failRenderJob(
     record.job.id,
+    claimed.claimToken,
     error instanceof Error ? error.message : "Acceptance render failed",
   );
   throw error;
