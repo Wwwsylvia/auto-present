@@ -95,3 +95,38 @@ export async function POST(
   );
   return NextResponse.json(project);
 }
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
+  const { id } = await params;
+  let removedPath = "";
+  try {
+    const project = await updateProject(id, (current) => {
+      removedPath = current.assets.find((asset) => asset.kind === "demo-video")?.localPath ?? "";
+      return {
+        ...current,
+        assets: current.assets.filter((asset) => asset.kind !== "demo-video"),
+        renderJobs: current.renderJobs.map((job) => ({
+          ...job,
+          status: "stale" as const,
+          progress: 0,
+          outputUrl: undefined,
+          error: undefined,
+        })),
+      };
+    });
+    await runBestEffort(
+      "Could not invalidate every obsolete render after removing the demo upload",
+      () => invalidateRenderJobs(id, ""),
+    );
+    if (removedPath) await removeFilesBestEffort([removedPath]);
+    return NextResponse.json(project);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not remove the demo clip";
+    return NextResponse.json({ error: message }, { status: 404 });
+  }
+}

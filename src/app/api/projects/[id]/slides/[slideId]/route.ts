@@ -42,15 +42,36 @@ export async function PATCH(
       slide.id === slideId ? { ...slide, ...parsed.data.changes } : slide,
     ),
   };
-  const updated = await updateProject(id, (current) => ({
-    ...current,
-    revisions: [...current.revisions, nextRevision],
-    activeRevisionId: nextRevision.id,
-    approvedDeckRevisionId: null,
-    renderJobs: current.renderJobs.map((job) =>
-      job.status === "complete" ? { ...job, status: "stale" as const } : job,
-    ),
-  }));
+  let updated;
+  try {
+    updated = await updateProject(id, (current) => {
+      const currentRevision = activeRevision(current);
+      if (
+        !currentRevision ||
+        currentRevision.id !== revision.id ||
+        currentRevision.version !== parsed.data.expectedVersion
+      ) {
+        throw new Error("REVISION_CONFLICT");
+      }
+      return {
+        ...current,
+        revisions: [...current.revisions, nextRevision],
+        activeRevisionId: nextRevision.id,
+        approvedDeckRevisionId: null,
+        renderJobs: current.renderJobs.map((job) =>
+          job.status === "complete" ? { ...job, status: "stale" as const } : job,
+        ),
+      };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "REVISION_CONFLICT") {
+      return NextResponse.json(
+        { error: "This presentation changed elsewhere. Refresh before editing." },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
   await invalidateRenderJobs(id, nextRevision.id);
   return NextResponse.json(updated);
 }

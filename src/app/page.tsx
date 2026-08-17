@@ -24,8 +24,8 @@ export default async function Home() {
             with voiceover and captions—without losing your final hackathon hours.
           </p>
           <div className="workflow-preview">
-            <div><strong>01</strong><span>Plan the story</span></div>
-            <div><strong>02</strong><span>Create the deck</span></div>
+            <div><strong>01</strong><span>Share your brief</span></div>
+            <div><strong>02</strong><span>Review the deck</span></div>
             <div><strong>03</strong><span>Produce the video</span></div>
           </div>
         </div>
@@ -39,7 +39,9 @@ export default async function Home() {
           <div className="project-grid">
             {projects.map((project) => (
               <Link className="project-card" href={`/projects/${project.id}`} key={project.id}>
-                <span className={`stage stage-${project.stage}`}>{project.stage}</span>
+                <span className={`stage stage-${project.stage}`}>
+                  {project.stage === "produce" ? "Produce video" : project.revisions.length ? "Review deck" : "Brief"}
+                </span>
                 <h3>{project.revisions.at(-1)?.title ?? project.input.idea.slice(0, 52)}</h3>
                 <p>{project.input.durationMinutes} min · {project.input.audience}</p>
                 <span className="open-project">Open project →</span>

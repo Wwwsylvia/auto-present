@@ -14,6 +14,7 @@ import {
   failRenderJob,
   getRenderJob,
   invalidateRenderJobs,
+  renderDirectory,
   retryRenderJob,
   updateRenderJob,
 } from "@/lib/render-queue";
@@ -126,6 +127,24 @@ test("deferred jobs cannot be claimed and can be compensated", async () => {
   }
 });
 
+test("recovers an abandoned deferred job after the activation grace period", async () => {
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-queue-"));
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const record = createRenderJob(approvedProject(), "preview");
+    record.job.createdAt = new Date(Date.now() - 61_000).toISOString();
+    await enqueueRender(record, { deferClaim: true });
+
+    const claimed = await claimNextRenderJob();
+    assert.equal(claimed?.job.id, record.job.id);
+    assert.equal(claimed?.job.status, "rendering");
+  } finally {
+    process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("an invalidated active claim cannot revive obsolete output", async () => {
   const previous = process.env.IDEA2IMPACT_DATA_DIR;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-race-"));
@@ -147,6 +166,58 @@ test("an invalidated active claim cannot revive obsolete output", async () => {
       /claim is no longer active/i,
     );
     assert.equal((await getRenderJob(record.job.id))?.status, "stale");
+  } finally {
+    process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("invalidation preserves unrelated project output", async () => {
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-isolation-"));
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const target = createRenderJob(approvedProject(), "preview");
+    const unrelated = createRenderJob(
+      { ...approvedProject(), id: "unrelated-project" },
+      "preview",
+    );
+    await enqueueRender(target);
+    await enqueueRender(unrelated);
+    await fs.mkdir(renderDirectory(unrelated.job.id), { recursive: true });
+    const unrelatedOutput = path.join(renderDirectory(unrelated.job.id), "presentation.mp4");
+    await fs.writeFile(unrelatedOutput, "unrelated");
+
+    await invalidateRenderJobs("project", "new-revision");
+
+    assert.equal((await getRenderJob(target.job.id))?.status, "stale");
+    assert.equal((await getRenderJob(unrelated.job.id))?.status, "queued");
+    assert.equal(await fs.readFile(unrelatedOutput, "utf8"), "unrelated");
+  } finally {
+    process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejected manual retries preserve existing render output", async () => {
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-retry-"));
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const record = createRenderJob(approvedProject(), "preview");
+    await enqueueRender(record);
+    await updateRenderJob(record.job.id, (job) => ({
+      ...job,
+      status: "complete",
+      progress: 100,
+      outputUrl: `/api/renders/${job.id}`,
+    }));
+    await fs.mkdir(renderDirectory(record.job.id), { recursive: true });
+    const output = path.join(renderDirectory(record.job.id), "presentation.mp4");
+    await fs.writeFile(output, "complete");
+
+    await assert.rejects(retryRenderJob(record.job.id), /only failed/i);
+    assert.equal(await fs.readFile(output, "utf8"), "complete");
   } finally {
     process.env.IDEA2IMPACT_DATA_DIR = previous;
     await fs.rm(directory, { recursive: true, force: true });

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import { foundryConfigured } from "@/lib/config";
@@ -13,9 +12,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   return (
     <main className="project-page">
       <header className="site-header project-header">
-        <Link className="brand" href="/">
+        {/* Full navigation lets the browser protect unsaved slide edits. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a className="brand" href="/">
           <span className="brand-mark">I2</span>Idea2Impact
-        </Link>
+        </a>
         <div className="project-meta">
           <span>{project.input.audience}</span>
           <span>{project.input.durationMinutes} min</span>

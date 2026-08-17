@@ -55,16 +55,29 @@ export async function POST(
         502,
       );
     }
-    const updated = await updateProject(id, (current) => ({
-      ...current,
-      revisions: [...current.revisions, nextRevision],
-      activeRevisionId: nextRevision.id,
-      approvedDeckRevisionId: null,
-      renderJobs: current.renderJobs.map((job) =>
-        job.status === "complete" ? { ...job, status: "stale" as const } : job,
-      ),
-      lastError: null,
-    }));
+    const updated = await updateProject(id, (current) => {
+      const currentRevision = activeRevision(current);
+      if (
+        !currentRevision ||
+        currentRevision.id !== revision.id ||
+        currentRevision.version !== body.expectedVersion
+      ) {
+        throw new PublicError(
+          "The presentation changed while the revision was generated. Refresh and try again.",
+          409,
+        );
+      }
+      return {
+        ...current,
+        revisions: [...current.revisions, nextRevision],
+        activeRevisionId: nextRevision.id,
+        approvedDeckRevisionId: null,
+        renderJobs: current.renderJobs.map((job) =>
+          job.status === "complete" ? { ...job, status: "stale" as const } : job,
+        ),
+        lastError: null,
+      };
+    });
     await invalidateRenderJobs(id, nextRevision.id);
     return NextResponse.json({ project: updated, summary: patch.summary });
   } catch (error) {

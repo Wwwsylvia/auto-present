@@ -128,7 +128,7 @@ export async function synthesizeSpeech(
   }
   const voice = process.env.AZURE_SPEECH_VOICE ?? "en-US-AvaMultilingualNeural";
   const response = await fetch(
-    new URL("tts/cognitiveservices/v1", endpoint.endsWith("/") ? endpoint : `${endpoint}/`),
+    new URL("cognitiveservices/v1", endpoint.endsWith("/") ? endpoint : `${endpoint}/`),
     {
       method: "POST",
       headers: {

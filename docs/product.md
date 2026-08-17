@@ -8,9 +8,9 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 
 ## Workflow
 
-1. **Plan:** provide an idea and optional public GitHub URL, generate an evidence-aware outline, edit it, and approve it.
-2. **Create:** review the deck and narration together, edit fields directly or request a contextual AI revision, and approve the active revision.
-3. **Produce:** optionally add a validated demo clip, queue a background preview or final render, monitor progress/retries, then download the narrated MP4.
+1. **Brief:** provide an idea and optional public GitHub URL. Submission immediately generates an evidence-aware deck and narration.
+2. **Review deck:** review slides and narration together, edit fields directly or request a contextual AI revision, then approve the entire active revision.
+3. **Produce video:** optionally add a validated demo clip immediately before the closing slide, queue a background preview or final render, monitor progress and retries, then download the narrated MP4.
 
 ## Acceptance criteria
 

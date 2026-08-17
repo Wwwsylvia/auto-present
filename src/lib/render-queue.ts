@@ -19,6 +19,14 @@ const queueRecordSchema = z.object({
   claimable: z.boolean().optional(),
 });
 type QueueRecord = z.infer<typeof queueRecordSchema>;
+const deferredRecoveryDelayMs = 60_000;
+
+function isClaimable(record: QueueRecord, now: Date): boolean {
+  return (
+    record.claimable !== false ||
+    now.getTime() - Date.parse(record.job.createdAt) >= deferredRecoveryDelayMs
+  );
+}
 
 function queueDirectory(): string {
   return path.join(dataDirectory(), "render-queue");
@@ -196,7 +204,7 @@ export async function claimNextRenderJob(
     const id = file.slice(0, -5);
     const record = await readRecord(id);
     if (!record) continue;
-    if (record.claimable === false) continue;
+    if (!isClaimable(record, now)) continue;
     const due =
       record.job.status === "queued" ||
       (record.job.status === "retrying" &&
@@ -227,7 +235,7 @@ export async function claimNextRenderJob(
       const latest = await withTransitionLock(id, async () => {
         const current = await readRecord(id);
         if (!current) return undefined;
-        if (current.claimable === false) return undefined;
+        if (!isClaimable(current, now)) return undefined;
         const stillDue =
           current.job.status === "queued" ||
           (current.job.status === "retrying" &&
@@ -237,6 +245,7 @@ export async function claimNextRenderJob(
             Boolean(current.leaseExpiresAt) &&
             Date.parse(current.leaseExpiresAt ?? "") <= now.getTime());
         if (!stillDue) return undefined;
+        current.claimable = true;
         current.job = {
           ...current.job,
           status: "rendering",
@@ -344,20 +353,25 @@ export async function failRenderJob(
 }
 
 export async function retryRenderJob(id: string): Promise<RenderJob> {
-  await fs.rm(renderDirectory(id), { recursive: true, force: true });
-  return updateRenderJob(id, (job) => {
-    if (job.status !== "failed") {
+  return withTransitionLock(id, async () => {
+    const record = await readRecord(id);
+    if (!record) throw new Error("Render job not found");
+    if (record.job.status !== "failed") {
       throw new Error("Only failed render jobs can be retried");
     }
-    return {
-      ...job,
+    await fs.rm(renderDirectory(id), { recursive: true, force: true });
+    record.job = renderJobSchema.parse({
+      ...record.job,
       status: "queued",
       progress: 0,
       attempts: 0,
       nextAttemptAt: undefined,
       error: undefined,
       outputUrl: undefined,
-    };
+      updatedAt: new Date().toISOString(),
+    });
+    await atomicWrite(recordPath(id), record);
+    return record.job;
   });
 }
 
@@ -372,6 +386,7 @@ export async function invalidateRenderJobs(
   await Promise.all(
     files.map(async (file) => {
       const id = file.slice(0, -5);
+      let invalidated = false;
       await withTransitionLock(id, async () => {
         const record = await readRecord(id);
         if (
@@ -381,6 +396,7 @@ export async function invalidateRenderJobs(
         ) {
           return;
         }
+        invalidated = true;
         record.job = {
           ...record.job,
           status: "stale",
@@ -393,8 +409,10 @@ export async function invalidateRenderJobs(
         record.leaseExpiresAt = undefined;
         await atomicWrite(recordPath(id), record);
       });
-      await fs.rm(renderDirectory(id), { recursive: true, force: true });
-      await fs.rm(lockPath(id), { force: true });
+      if (invalidated) {
+        await fs.rm(renderDirectory(id), { recursive: true, force: true });
+        await fs.rm(lockPath(id), { force: true });
+      }
     }),
   );
 }
