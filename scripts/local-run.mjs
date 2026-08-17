@@ -1,20 +1,25 @@
 import { spawn } from "node:child_process";
 
 const mode = process.argv[2] === "start" ? "start" : "dev";
-const windows = process.platform === "win32";
-const command = windows ? process.env.ComSpec : "npm";
-function commandArguments(script) {
-  return windows
-    ? ["/d", "/s", "/c", `npm run ${script}`]
-    : ["run", script];
-}
+const webArguments = [
+  "node_modules/next/dist/bin/next",
+  mode,
+  "--hostname",
+  "127.0.0.1",
+];
+const workerArguments = [
+  "--env-file-if-exists=.env.local",
+  "--import",
+  "tsx",
+  "src/worker/render-worker.ts",
+];
 
 const children = [
-  spawn(command, commandArguments(mode === "start" ? "start:web" : "dev:web"), {
+  spawn(process.execPath, webArguments, {
     stdio: "inherit",
     windowsHide: true,
   }),
-  spawn(command, commandArguments("worker"), {
+  spawn(process.execPath, workerArguments, {
     stdio: "inherit",
     windowsHide: true,
   }),

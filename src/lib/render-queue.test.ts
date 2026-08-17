@@ -13,6 +13,7 @@ import {
   enqueueRender,
   failRenderJob,
   getRenderJob,
+  hydrateRenderJobs,
   invalidateRenderJobs,
   renderDirectory,
   retryRenderJob,
@@ -42,14 +43,39 @@ function approvedProject(): Project {
         title: "Title",
         tagline: "Tagline",
         summary: "Summary",
+        strategy: {
+          audienceGoal: "Understand the product and approve the next step.",
+          coreMessage: "The product turns ideas into clear presentations.",
+          problem: "Teams struggle to communicate strong ideas quickly.",
+          solution: "A guided workflow creates a structured presentation.",
+          differentiators: ["Structured generation and deterministic rendering"],
+          proofPoints: [],
+          narrativeArc: ["hook", "solution", "close"],
+          voiceoverDirection: "Use concise, outcome-focused narration.",
+          demoPlan: {
+            recommendation: "omit",
+            rationale: "This queue test does not require demo footage.",
+          },
+        },
         promptVersion: "test",
         source: "demo",
         slides: ["hero", "architecture", "closing"].map((layout, index) => ({
           id: `slide-${index}`,
           title: `Slide ${index}`,
           purpose: "Purpose",
+          audienceTakeaway: "A clear and memorable point.",
           layout: layout as "hero" | "architecture" | "closing",
           bullets: ["Point"],
+          visual:
+            index === 1
+              ? {
+                  type: "flow" as const,
+                  steps: [{ label: "Input" }, { label: "Output" }],
+                }
+              : {
+                  type: "statement" as const,
+                  statement: "Turn ideas into impact.",
+                },
           narration: "Narration.",
           durationSeconds: 20,
           evidencePaths: [],
@@ -139,6 +165,49 @@ test("recovers an abandoned deferred job after the activation grace period", asy
     const claimed = await claimNextRenderJob();
     assert.equal(claimed?.job.id, record.job.id);
     assert.equal(claimed?.job.status, "rendering");
+  } finally {
+    process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("quarantines incompatible queue records without blocking valid jobs", async () => {
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-queue-"));
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const queueDirectory = path.join(directory, "render-queue");
+    const incompatibleId = "00000000-0000-4000-8000-000000000000";
+    await fs.mkdir(queueDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(queueDirectory, `${incompatibleId}.json`),
+      JSON.stringify({ job: { id: incompatibleId }, project: {} }),
+    );
+    const valid = createRenderJob(approvedProject(), "preview");
+    await enqueueRender(valid);
+
+    const claimed = await claimNextRenderJob();
+
+    assert.equal(claimed?.job.id, valid.job.id);
+    await fs.access(path.join(queueDirectory, `${incompatibleId}.invalid.json`));
+  } finally {
+    process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("marks jobs with missing queue records stale during hydration", async () => {
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-queue-"));
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const project = approvedProject();
+    const record = createRenderJob(project, "preview");
+    project.renderJobs = [record.job];
+
+    const hydrated = await hydrateRenderJobs(project);
+
+    assert.equal(hydrated.renderJobs[0]?.status, "stale");
   } finally {
     process.env.IDEA2IMPACT_DATA_DIR = previous;
     await fs.rm(directory, { recursive: true, force: true });

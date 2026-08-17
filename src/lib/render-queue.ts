@@ -67,6 +67,16 @@ async function readRecord(id: string): Promise<QueueRecord | undefined> {
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof SyntaxError || error instanceof z.ZodError) {
+      const invalidPath = path.join(queueDirectory(), `${id}.invalid.json`);
+      try {
+        await fs.rename(recordPath(id), invalidPath);
+      } catch (renameError) {
+        if ((renameError as NodeJS.ErrnoException).code !== "ENOENT") throw renameError;
+      }
+      console.warn(`[Idea2Impact] Quarantined incompatible render queue record ${id}`);
+      return undefined;
+    }
     throw error;
   }
 }
@@ -172,7 +182,16 @@ export async function getRenderJob(id: string): Promise<RenderJob | undefined> {
 
 export async function hydrateRenderJobs(project: Project): Promise<Project> {
   const renderJobs = await Promise.all(
-    project.renderJobs.map(async (stored) => (await getRenderJob(stored.id)) ?? stored),
+    project.renderJobs.map(async (stored) => {
+      const current = await getRenderJob(stored.id);
+      return current ?? {
+        ...stored,
+        status: "stale" as const,
+        progress: 0,
+        outputUrl: undefined,
+        error: undefined,
+      };
+    }),
   );
   return { ...project, renderJobs };
 }

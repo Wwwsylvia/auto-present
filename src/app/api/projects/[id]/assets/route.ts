@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { dataDirectory } from "@/lib/config";
+import { activeRevision } from "@/lib/domain";
 import {
   publicErrorResponse,
   rejectNonLocalMutation,
@@ -31,6 +32,18 @@ export async function POST(
   if (!existingProject) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
+  const currentRevision = activeRevision(existingProject);
+  const hasApprovedDemoSlide = Boolean(
+    currentRevision &&
+      existingProject.approvedDeckRevisionId === currentRevision.id &&
+      currentRevision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo"),
+  );
+  if (!hasApprovedDemoSlide) {
+    return NextResponse.json(
+      { error: "Approve a deck with a semantic demo slide before uploading a demo clip" },
+      { status: 400 },
+    );
+  }
   const form = await request.formData();
   const upload = form.get("file");
   if (!(upload instanceof File)) {
@@ -58,30 +71,46 @@ export async function POST(
   try {
     validateDemoProbe(await probeMedia(temporaryPath));
     await fs.rename(temporaryPath, localPath);
-    project = await updateProject(id, (current) => ({
-      ...current,
-      assets: [
-        ...current.assets.filter((asset) => asset.kind !== "demo-video"),
-        {
-          id: assetId,
-          kind: "demo-video" as const,
-          name: path.basename(upload.name).slice(0, 255),
-          mimeType: upload.type,
-          size: upload.size,
-          localPath,
-        },
-      ],
-      renderJobs: current.renderJobs.map((job) => ({
-        ...job,
-        status: "stale" as const,
-        progress: 0,
-        outputUrl: undefined,
-        error: undefined,
-      })),
-    }));
+    project = await updateProject(id, (current) => {
+      const revision = activeRevision(current);
+      if (
+        !revision ||
+        current.approvedDeckRevisionId !== revision.id ||
+        !revision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo")
+      ) {
+        throw new Error("DEMO_SLIDE_REQUIRED");
+      }
+      return {
+        ...current,
+        assets: [
+          ...current.assets.filter((asset) => asset.kind !== "demo-video"),
+          {
+            id: assetId,
+            kind: "demo-video" as const,
+            name: path.basename(upload.name).slice(0, 255),
+            mimeType: upload.type,
+            size: upload.size,
+            localPath,
+          },
+        ],
+        renderJobs: current.renderJobs.map((job) => ({
+          ...job,
+          status: "stale" as const,
+          progress: 0,
+          outputUrl: undefined,
+          error: undefined,
+        })),
+      };
+    });
   } catch (error) {
     await fs.rm(temporaryPath, { force: true });
     await fs.rm(localPath, { force: true });
+    if (error instanceof Error && error.message === "DEMO_SLIDE_REQUIRED") {
+      return NextResponse.json(
+        { error: "The approved deck changed and no longer contains a semantic demo slide" },
+        { status: 409 },
+      );
+    }
     return publicErrorResponse(error, "Upload validation failed.", 400);
   }
   await runBestEffort(

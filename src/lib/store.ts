@@ -8,23 +8,59 @@ import { hydrateRenderJobs } from "@/lib/render-queue";
 const projectsFile = path.join(dataDirectory(), "projects.json");
 
 let writeQueue = Promise.resolve();
+let warnedAboutIncompatibleProjects = false;
 
-async function readProjects(): Promise<Project[]> {
+function partitionProjectRecords(records: unknown[]): {
+  projects: Project[];
+  incompatible: unknown[];
+} {
+  const projects: Project[] = [];
+  const incompatible: unknown[] = [];
+  for (const record of records) {
+    const parsed = projectSchema.safeParse(record);
+    if (parsed.success) projects.push(parsed.data);
+    else incompatible.push(record);
+  }
+  return { projects, incompatible };
+}
+
+async function readProjectRecords(): Promise<{
+  projects: Project[];
+  incompatible: unknown[];
+}> {
   try {
     const raw = await fs.readFile(projectsFile, "utf8");
-    return projectSchema.array().parse(JSON.parse(raw));
+    const records = JSON.parse(raw) as unknown;
+    if (!Array.isArray(records)) throw new Error("Project storage must contain an array");
+    return partitionProjectRecords(records);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+      return { projects: [], incompatible: [] };
     }
     throw error;
   }
 }
 
+async function readProjects(): Promise<Project[]> {
+  const { projects, incompatible } = await readProjectRecords();
+  if (incompatible.length > 0 && !warnedAboutIncompatibleProjects) {
+    warnedAboutIncompatibleProjects = true;
+    console.warn(
+      `Ignored ${incompatible.length} incompatible saved project(s). Regenerate them for deck-intelligence v2; their records remain preserved.`,
+    );
+  }
+  return projects;
+}
+
 async function writeProjects(projects: Project[]): Promise<void> {
   await fs.mkdir(dataDirectory(), { recursive: true });
+  const { incompatible } = await readProjectRecords();
   const temporaryFile = `${projectsFile}.${randomUUID()}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify(projects, null, 2), "utf8");
+  await fs.writeFile(
+    temporaryFile,
+    JSON.stringify([...incompatible, ...projects], null, 2),
+    "utf8",
+  );
   await fs.rename(temporaryFile, projectsFile);
 }
 
