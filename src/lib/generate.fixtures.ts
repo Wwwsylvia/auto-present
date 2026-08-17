@@ -59,6 +59,11 @@ export function createGenerateTestProject(): Project {
           excerpt: "Repository evidence must remain user-provided context.",
           url: "https://github.com/example/project/blob/abc123/README.md",
         },
+        {
+          path: "src/app.ts",
+          excerpt: "The application validates structured presentation output.",
+          url: "https://github.com/example/project/blob/abc123/src/app.ts",
+        },
       ],
     },
     revisions: [

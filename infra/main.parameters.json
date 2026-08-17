@@ -8,12 +8,6 @@
     "location": {
       "value": "eastus2"
     },
-    "imageRepository": {
-      "value": "idea2impact"
-    },
-    "imageTag": {
-      "value": "latest"
-    },
     "enableExternalIngress": {
       "value": false
     },

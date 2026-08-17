@@ -5,27 +5,81 @@ targetScope = 'resourceGroup'
 @maxLength(12)
 param namePrefix string = 'idea2impact'
 
-@description('Azure region. The workload is intentionally pinned to East US 2.')
-@allowed([
-  'eastus2'
-])
+@description('Azure region supported by the selected Foundry model and Speech resource.')
 param location string = 'eastus2'
 
-@description('Container image repository in the provisioned registry.')
-param imageRepository string = 'idea2impact'
-
-@description('Container image tag to deploy.')
-param imageTag string = 'latest'
-
-@description('Fully qualified container image. Use the bootstrap image for the first deployment, then the immutable ACR image.')
-param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+@description('Fully qualified container image. Required to prevent redeployments from silently resetting a promoted image.')
+@minLength(1)
+param containerImage string
 
 @description('Expose the web Container App through external ingress. Keep false for localhost-only operation.')
 param enableExternalIngress bool = false
 
+@description('Microsoft Entra tenant ID. Required when external ingress is enabled.')
+param entraTenantId string = ''
+
+@description('Microsoft Entra application client ID. Required when external ingress is enabled.')
+param entraClientId string = ''
+
+@description('Microsoft Entra application client secret. Required when external ingress is enabled and stored only as a Container Apps secret.')
+@secure()
+param entraClientSecret string = ''
+
+@description('Optional local operator object ID that receives Foundry inference and Speech data-plane roles.')
+param localOperatorPrincipalId string = ''
+
+@description('Principal type for localOperatorPrincipalId.')
+@allowed([
+  'User'
+  'ServicePrincipal'
+])
+param localOperatorPrincipalType string = 'User'
+
 @description('Capacity in thousands of tokens per minute for the model deployment.')
 @minValue(1)
 param modelCapacity int = 10
+
+@description('Foundry project resource name.')
+param foundryProjectName string = 'idea2impact-project'
+
+@description('Foundry model deployment name.')
+param modelDeploymentName string = 'gpt-5-4-mini'
+
+@description('Foundry model catalog name.')
+param modelName string = 'gpt-5.4-mini'
+
+@description('Foundry model version.')
+param modelVersion string = '2026-03-17'
+
+@description('Default Azure Speech voice.')
+param speechVoice string = 'en-US-AvaMultilingualNeural'
+
+@description('Optional existing or desired ACR name. Empty creates a deterministic name.')
+param registryName string = ''
+
+@description('Optional existing or desired Log Analytics workspace name. Empty creates a deterministic name.')
+param logAnalyticsWorkspaceName string = ''
+
+@description('Optional existing or desired storage account name. Empty creates a deterministic name.')
+param storageName string = ''
+
+@description('Existing or desired Azure Files share name.')
+param storageFileShareName string = 'idea2impact-data'
+
+@description('Optional existing or desired Container Apps environment name. Empty creates a deterministic name.')
+param containerAppsEnvironmentName string = ''
+
+@description('Optional existing or desired Foundry/AIServices account name. Empty creates a deterministic name.')
+param foundryAccountName string = ''
+
+@description('Optional existing or desired Speech account name. Empty creates a deterministic name.')
+param speechAccountName string = ''
+
+@description('Optional existing or desired web Container App name. Empty creates a deterministic name.')
+param webContainerAppName string = ''
+
+@description('Optional existing or desired render Container Apps Job name. Empty creates a deterministic name.')
+param renderContainerAppJobName string = ''
 
 @description('Optional GitHub token used by the application. It is stored only as a Container Apps secret.')
 @secure()
@@ -40,22 +94,26 @@ var workloadTags = union(tags, {
 })
 var suffix = uniqueString(subscription().id, resourceGroup().id, namePrefix)
 var shortPrefix = toLower(replace(namePrefix, '-', ''))
-var acrName = take('${shortPrefix}${suffix}acr', 50)
-var storageAccountName = take('${shortPrefix}${suffix}st', 24)
-var logAnalyticsName = take('${namePrefix}-${suffix}-log', 63)
-var environmentName = take('${namePrefix}-${suffix}-env', 60)
-var fileShareName = 'idea2impact-data'
+var acrName = empty(registryName) ? take('${shortPrefix}${suffix}acr', 50) : registryName
+var storageAccountName = empty(storageName) ? take('${shortPrefix}${suffix}st', 24) : storageName
+var logAnalyticsName = empty(logAnalyticsWorkspaceName) ? take('${namePrefix}-${suffix}-log', 63) : logAnalyticsWorkspaceName
+var environmentName = empty(containerAppsEnvironmentName) ? take('${namePrefix}-${suffix}-env', 60) : containerAppsEnvironmentName
+var fileShareName = storageFileShareName
 var environmentStorageName = 'shared-data'
 var webIdentityName = take('${namePrefix}-${suffix}-web-id', 128)
 var jobIdentityName = take('${namePrefix}-${suffix}-job-id', 128)
-var foundryName = take('${namePrefix}-${suffix}-ai', 64)
-var foundryProjectName = take('${namePrefix}-project', 64)
-var modelDeploymentName = 'gpt-5-4-mini'
-var speechName = take('${namePrefix}-${suffix}-speech', 64)
-var webAppName = take('${namePrefix}-${suffix}-web', 32)
-var renderJobName = take('${namePrefix}-${suffix}-render', 32)
-var image = empty(containerImage) ? '${registry.properties.loginServer}/${imageRepository}:${imageTag}' : containerImage
+var foundryName = empty(foundryAccountName) ? take('${namePrefix}-${suffix}-ai', 64) : foundryAccountName
+var speechName = empty(speechAccountName) ? take('${namePrefix}-${suffix}-speech', 64) : speechAccountName
+var webAppName = empty(webContainerAppName) ? take('${namePrefix}-${suffix}-web', 32) : webContainerAppName
+var renderJobName = empty(renderContainerAppJobName) ? take('${namePrefix}-${suffix}-render', 32) : renderContainerAppJobName
+var image = containerImage
 var dataMountPath = '/data'
+var validatedEntraTenantId = enableExternalIngress && empty(entraTenantId) ? fail('entraTenantId is required when enableExternalIngress is true.') : entraTenantId
+var validatedEntraClientId = enableExternalIngress && empty(entraClientId) ? fail('entraClientId is required when enableExternalIngress is true.') : entraClientId
+var validatedEntraClientSecret = enableExternalIngress && empty(entraClientSecret) ? fail('entraClientSecret is required when enableExternalIngress is true.') : entraClientSecret
+var authenticationLoginEndpoint = endsWith(az.environment().authentication.loginEndpoint, '/')
+  ? az.environment().authentication.loginEndpoint
+  : '${az.environment().authentication.loginEndpoint}/'
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -185,8 +243,8 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-5.4-mini'
-      version: '2026-03-17'
+      name: modelName
+      version: modelVersion
     }
     versionUpgradeOption: 'NoAutoUpgrade'
   }
@@ -272,6 +330,26 @@ resource jobSpeechUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+resource localOperatorOpenAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(localOperatorPrincipalId)) {
+  scope: foundry
+  name: guid(foundry.id, localOperatorPrincipalId, openAiUserRoleId)
+  properties: {
+    principalId: localOperatorPrincipalId
+    principalType: localOperatorPrincipalType
+    roleDefinitionId: openAiUserRoleId
+  }
+}
+
+resource localOperatorSpeechUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(localOperatorPrincipalId)) {
+  scope: speech
+  name: guid(speech.id, localOperatorPrincipalId, speechUserRoleId)
+  properties: {
+    principalId: localOperatorPrincipalId
+    principalType: localOperatorPrincipalType
+    roleDefinitionId: speechUserRoleId
+  }
+}
+
 var projectEndpoint = 'https://${foundry.name}.services.ai.azure.com/api/projects/${foundryProject.name}'
 var dataEnvironment = [
   {
@@ -300,19 +378,26 @@ var speechEnvironment = [
   }
   {
     name: 'AZURE_SPEECH_VOICE'
-    value: 'en-US-AvaMultilingualNeural'
+    value: speechVoice
   }
   {
     name: 'AZURE_SPEECH_USE_MANAGED_IDENTITY'
     value: 'true'
   }
 ]
-var webSecrets = empty(githubToken) ? [] : [
+var githubSecrets = empty(githubToken) ? [] : [
   {
     name: 'github-token'
     value: githubToken
   }
 ]
+var authSecrets = enableExternalIngress ? [
+  {
+    name: 'entra-client-secret'
+    value: validatedEntraClientSecret
+  }
+] : []
+var webSecrets = concat(githubSecrets, authSecrets)
 
 resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
   name: webAppName
@@ -335,10 +420,10 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
         }
       ]
       secrets: webSecrets
-    }, enableExternalIngress ? {
+    }, {
       ingress: {
         allowInsecure: false
-        external: true
+        external: false
         targetPort: 3000
         traffic: [
           {
@@ -348,13 +433,17 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
         ]
         transport: 'Auto'
       }
-    } : {})
+    })
     template: {
       containers: [
         {
           name: 'web'
           image: image
           env: concat(dataEnvironment, foundryEnvironment, [
+            {
+              name: 'APP_HOSTING_MODE'
+              value: 'azure'
+            }
             {
               name: 'AZURE_CLIENT_ID'
               value: webIdentity.properties.clientId
@@ -385,6 +474,32 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/api/health'
+                port: 3000
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 15
+              periodSeconds: 30
+              timeoutSeconds: 5
+              failureThreshold: 3
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/api/health'
+                port: 3000
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 10
+              timeoutSeconds: 5
+              failureThreshold: 3
+            }
+          ]
           volumeMounts: [
             {
               mountPath: dataMountPath
@@ -412,6 +527,41 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = {
   ]
 }
 
+resource webAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (enableExternalIngress) {
+  parent: webApp
+  name: 'current'
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: validatedEntraClientId
+          clientSecretSettingName: 'entra-client-secret'
+          openIdIssuer: '${authenticationLoginEndpoint}${validatedEntraTenantId}/v2.0'
+        }
+        validation: {
+          allowedAudiences: [
+            validatedEntraClientId
+            'api://${validatedEntraClientId}'
+          ]
+        }
+      }
+    }
+    login: {
+      tokenStore: {
+        enabled: true
+      }
+    }
+  }
+}
+
 resource renderJob 'Microsoft.App/jobs@2025-01-01' = {
   name: renderJobName
   location: location
@@ -425,7 +575,7 @@ resource renderJob 'Microsoft.App/jobs@2025-01-01' = {
   properties: {
     environmentId: environment.id
     configuration: {
-      replicaRetryLimit: 1
+      replicaRetryLimit: 0
       replicaTimeout: 3600
       registries: [
         {
@@ -516,10 +666,15 @@ output foundryProjectEndpoint string = projectEndpoint
 output modelDeploymentName string = modelDeployment.name
 output speechAccountId string = speech.id
 output speechAccountName string = speech.name
+output speechEndpoint string = 'https://${speech.name}.cognitiveservices.azure.com/'
+output speechRegion string = location
 output webIdentityId string = webIdentity.id
 output jobIdentityId string = jobIdentity.id
 output webContainerAppId string = webApp.id
 output webContainerAppName string = webApp.name
-output webHost string = enableExternalIngress ? webApp.properties.configuration.ingress.fqdn : ''
+output webHost string = webApp.properties.configuration.ingress.fqdn
+output externalIngressRequested bool = enableExternalIngress
+output externalIngressEnabled bool = false
+output entraAuthenticationEnabled bool = enableExternalIngress
 output renderJobId string = renderJob.id
 output renderJobName string = renderJob.name

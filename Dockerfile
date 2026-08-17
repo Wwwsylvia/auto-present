@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install --global npm@11
-RUN npm install
+RUN npm ci
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app

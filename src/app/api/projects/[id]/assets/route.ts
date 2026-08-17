@@ -4,6 +4,8 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { uploadDirectory } from "@/lib/data-paths";
 import { updateProject } from "@/lib/store";
+import { rejectUnsafeRequest } from "@/lib/http";
+import { removeFilesBestEffort } from "@/lib/local-files";
 
 const maxUploadSize = 100 * 1024 * 1024;
 const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime"]);
@@ -12,6 +14,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const form = await request.formData();
   const upload = form.get("file");
@@ -27,24 +31,31 @@ export async function POST(
   const extension = path.extname(upload.name).toLowerCase() || ".mp4";
   const assetId = randomUUID();
   const directory = uploadDirectory(id);
-  const localPath = path.join(directory, `${assetId}${extension}`);
+  const localPath = path.join(/* turbopackIgnore: true */ directory, `${assetId}${extension}`);
   await fs.mkdir(directory, { recursive: true });
   await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
   try {
-    const project = await updateProject(id, (current) => ({
-      ...current,
-      assets: [
-        ...current.assets.filter((asset) => asset.kind !== "demo-video"),
-        {
-          id: assetId,
-          kind: "demo-video" as const,
-          name: upload.name,
-          mimeType: upload.type,
-          size: upload.size,
-          localPath,
-        },
-      ],
-    }));
+    let replacedPaths: string[] = [];
+    const project = await updateProject(id, (current) => {
+      replacedPaths = current.assets
+        .filter((asset) => asset.kind === "demo-video")
+        .map((asset) => asset.localPath);
+      return {
+        ...current,
+        assets: [
+          ...current.assets.filter((asset) => asset.kind !== "demo-video"),
+          {
+            id: assetId,
+            kind: "demo-video" as const,
+            name: upload.name,
+            mimeType: upload.type,
+            size: upload.size,
+            localPath,
+          },
+        ],
+      };
+    });
+    await removeFilesBestEffort(replacedPaths.filter((file) => file !== localPath));
     return NextResponse.json(project);
   } catch (error) {
     await fs.rm(localPath, { force: true });

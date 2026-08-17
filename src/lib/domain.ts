@@ -71,6 +71,9 @@ export const renderJobSchema = z.object({
   progress: z.number().min(0).max(100),
   outputUrl: z.string().optional(),
   error: z.string().optional(),
+  claimToken: z.string().uuid().optional(),
+  leaseExpiresAt: z.string().optional(),
+  dispatchLeaseExpiresAt: z.string().optional(),
 });
 export type RenderJob = z.infer<typeof renderJobSchema>;
 

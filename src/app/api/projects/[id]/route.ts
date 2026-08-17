@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { reconcileRenderJobs } from "@/lib/render-jobs";
 import { getProject, updateProject } from "@/lib/store";
+import { rejectUnsafeRequest } from "@/lib/http";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const project = await getProject(id);
   if (!project) {

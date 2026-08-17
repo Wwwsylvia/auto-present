@@ -1,38 +1,38 @@
 # Architecture
 
-## Runtime boundaries
+The local browser calls a loopback-only Next.js server. That server owns
+validation, file-backed project state, Foundry calls, Speech calls, and local
+FFmpeg rendering. Local API requests require a loopback URL, Host, and Origin;
+there is intentionally no local user login.
 
-- **Next.js web application:** project workflow, editor, API routes, validation, and local orchestration.
-- **Microsoft Foundry:** model inference for initial generation and contextual typed patches. `DefaultAzureCredential` keeps credentials server-side.
-- **GitHub:** bounded public metadata and selected manifest/README evidence. Repository content is untrusted data and is never inserted into system instructions.
-- **Azure AI Speech:** per-slide narration audio plus sentence boundary timing.
-- **FFmpeg worker:** deterministic slide composition, optional demo footage, explicitly mapped narration audio, sentence captions, and MP4 encoding.
-- **Persistence:** atomic JSON snapshots and file assets for this single-user MVP. Set `IDEA2IMPACT_DATA_DIR` to a mounted Azure Files volume in Container Apps.
-- **Azure Container Apps Job:** optional manual-trigger worker execution for one immutable render manifest. In cloud mode, the web app starts the job through managed identity and returns without waiting for FFmpeg.
+Azure hosting retains separate web and render Job workloads with separate
+managed identities. Both mount one Azure Files share at `/data`, so project
+snapshots, portable `/api/renders/<id>` identifiers, uploads, manifests,
+statuses, and outputs remain coherent inside Linux containers. File-backed
+persistence is single-writer and therefore limited to one web replica.
 
-## Data flow
+External ingress is disabled by default. When enabled, Container Apps built-in
+Entra authentication is provisioned declaratively and required for every
+request. The application switches to `APP_HOSTING_MODE=azure`, where the
+platform auth boundary replaces loopback Host/Origin enforcement.
 
-1. The brief is validated with Zod and persisted.
-2. Optional GitHub evidence is normalized, bounded to 24,000 characters, and stored with commit identity.
-3. Foundry receives the brief and bounded evidence and returns JSON that must satisfy the presentation schema.
-4. Every direct or AI edit creates an immutable revision. Approval records a specific revision ID.
-5. Rendering accepts only the currently approved deck revision.
-6. Rendering writes an immutable manifest and queued status. Local mode executes it in the Next.js server process; cloud mode writes it to shared Azure Files and starts the Container Apps Job.
-7. Speech audio and sentence boundaries are generated per slide. FFmpeg maps narration explicitly, pads short segments to the approved duration without truncating speech, burns timed captions, and joins the immutable segments.
-8. The local renderer or cloud worker writes atomic progress/output status. The web app polls active cloud jobs and reconciles shared status without allowing a stale job to become current again.
-9. Editing marks completed render jobs stale. Queued or running jobs remain tied to their original revision and are not presented as output for the new revision.
+Rendering writes an immutable manifest and claim status. Workers hold a
+15-minute renewable lease. Each claim renders into a token-specific staging
+directory; only the current claim can atomically promote its directory to the
+canonical output. Stale or superseded claims clean only their own staging data.
+The web reconciler durably redispatches expired render or dispatch leases, while
+Container Apps automatic replica retry is disabled to avoid immediate duplicate
+claims and retry storms.
+Revision commits mark prior jobs stale, and cleanup after the project commit is
+best effort so cleanup failure cannot roll back a valid user edit. Downloads
+also require a current `complete` status, so stale URLs are not served.
 
-## Localhost topology
+Local-to-cloud dispatch is disabled because a Windows data path cannot be read
+by the Linux Job. Fully cloud-hosted dispatch uses only the shared `/data`
+topology. Moving to multiple web replicas requires transactional metadata
+storage and a durable queue rather than JSON snapshots.
 
-The product entry point is always the Next.js application on localhost. Azure services are called only from the local server process; the browser never calls Foundry or Speech directly. The provisioned web Container App has ingress disabled, no FQDN, and zero minimum replicas. It is retained as infrastructure history, not as a website. A manual-trigger Container Apps Job and Azure Files remain available for optional cloud rendering experiments. Store media in Blob Storage and project metadata in PostgreSQL before introducing multiple users or replicas.
-
-## Security properties
-
-- Foundry and Speech secrets never cross the browser boundary.
-- External web ingress is disabled by default. If enabled later, Microsoft Entra authentication is required before the endpoint is shared.
-- The web identity receives ACR pull, Foundry inference, and render-job read/start permissions.
-- Public GitHub URLs are restricted to canonical repository roots.
-- GitHub ingestion uses a small allowlist and hard context limit.
-- Model responses and patches are schema validated.
-- Render downloads validate UUID-shaped identifiers.
-- Uploads enforce allowed MIME types and a 100 MB limit.
+Resource names are parameterized. Supplying names from the target resource group
+adopts and converges compatible dedicated resources; omitting them creates
+deterministic names. Adoption is limited to same-region, same-type resources
+whose security configuration is compatible with the template.

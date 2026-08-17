@@ -74,6 +74,29 @@ test("rejects schema-invalid presentation output", () => {
   );
 });
 
+test("rejects unsupplied evidence", () => {
+  const project = createGenerateTestProject();
+  const unknownEvidence = structuredClone(responses.validGeneration);
+  unknownEvidence.slides[0].evidencePaths = ["not-supplied.txt"];
+  assert.throws(
+    () => parsePresentationResponse(JSON.stringify(unknownEvidence), project),
+    /evidence that was not supplied/,
+  );
+});
+
+test("rejects excessive duration drift with otherwise valid evidence", () => {
+  const project = createGenerateTestProject();
+  const wrongDuration = structuredClone(responses.validGeneration);
+  wrongDuration.slides = wrongDuration.slides.map((slide) => ({
+    ...slide,
+    durationSeconds: 3,
+  }));
+  assert.throws(
+    () => parsePresentationResponse(JSON.stringify(wrongDuration), project),
+    /duration budget/,
+  );
+});
+
 test("returns a valid contextual revision patch", async () => {
   const project = createGenerateTestProject();
   let request: FoundryChatRequest | undefined;

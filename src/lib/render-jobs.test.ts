@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,12 @@ import {
   reconcileRenderJobs,
   writeRenderManifest,
   writeRenderStatus,
+  dispatchRenderJob,
+  isRenderDownloadAvailable,
+  markRenderJobsStale,
+  promoteClaimOutput,
+  renderClaimDirectory,
+  renderNeedsRedispatch,
 } from "@/lib/render-jobs";
 
 function approvedProject(): Project {
@@ -92,6 +98,24 @@ test("creates queued jobs only for the approved active revision", () => {
   );
 });
 
+test("refuses localhost-triggered Container Apps rendering", async () => {
+  const previousMode = process.env.RENDER_EXECUTION_MODE;
+  const previousHosting = process.env.APP_HOSTING_MODE;
+  process.env.RENDER_EXECUTION_MODE = "container-apps-job";
+  process.env.APP_HOSTING_MODE = "local";
+  try {
+    await assert.rejects(
+      dispatchRenderJob("8abfb030-8907-4c28-a8a7-6f51f205a4e4"),
+      /Localhost-triggered cloud rendering is disabled/,
+    );
+  } finally {
+    if (previousMode === undefined) delete process.env.RENDER_EXECUTION_MODE;
+    else process.env.RENDER_EXECUTION_MODE = previousMode;
+    if (previousHosting === undefined) delete process.env.APP_HOSTING_MODE;
+    else process.env.APP_HOSTING_MODE = previousHosting;
+  }
+});
+
 test("reconciles worker state without reviving stale jobs", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-jobs-"));
   const previous = process.env.IDEA2IMPACT_DATA_DIR;
@@ -111,4 +135,102 @@ test("reconciles worker state without reviving stale jobs", async () => {
     else process.env.IDEA2IMPACT_DATA_DIR = previous;
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("promotes only the winning claim directory", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-claims-"));
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  const winner = "e18b6570-43f7-4590-a26e-09fbc780da4a";
+  const loser = "b8cc4348-bb61-4e31-ae43-fc9ea91e8ff4";
+  try {
+    const project = approvedProject();
+    const job = createQueuedRenderJob(project, "preview");
+    await writeRenderManifest(job, project);
+    await writeRenderStatus({
+      ...job,
+      status: "rendering",
+      progress: 50,
+      claimToken: winner,
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    for (const [token, content] of [
+      [winner, "winner"],
+      [loser, "loser"],
+    ] as const) {
+      const claimDirectory = renderClaimDirectory(job.id, token);
+      await mkdir(claimDirectory, { recursive: true });
+      await writeFile(path.join(claimDirectory, "presentation.mp4"), content);
+    }
+
+    assert.equal(
+      await promoteClaimOutput(job.id, winner, {
+        ...job,
+        status: "complete",
+        progress: 100,
+      }),
+      true,
+    );
+    await rm(renderClaimDirectory(job.id, loser), { recursive: true, force: true });
+    assert.equal(
+      await readFile(path.join(directory, "renders", job.id, "presentation.mp4"), "utf8"),
+      "winner",
+    );
+    assert.equal(await isRenderDownloadAvailable(job.id), true);
+  } finally {
+    if (previous === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stale invalidation removes canonical output and disables downloads", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-stale-output-"));
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const project = approvedProject();
+    const job = createQueuedRenderJob(project, "preview");
+    await writeRenderManifest(job, project);
+    await writeRenderStatus({ ...job, status: "complete", progress: 100 });
+    const output = path.join(directory, "renders", job.id, "presentation.mp4");
+    await mkdir(path.dirname(output), { recursive: true });
+    await writeFile(output, "obsolete");
+
+    await markRenderJobsStale([job]);
+    assert.equal(await isRenderDownloadAvailable(job.id), false);
+    await assert.rejects(access(output));
+  } finally {
+    if (previous === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("identifies only expired render and dispatch leases for redispatch", () => {
+  const project = approvedProject();
+  const job = createQueuedRenderJob(project, "preview");
+  const now = Date.now();
+  assert.equal(
+    renderNeedsRedispatch(
+      { ...job, status: "rendering", leaseExpiresAt: new Date(now - 1).toISOString() },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    renderNeedsRedispatch(
+      { ...job, status: "rendering", leaseExpiresAt: new Date(now + 60_000).toISOString() },
+      now,
+    ),
+    false,
+  );
+  assert.equal(
+    renderNeedsRedispatch(
+      { ...job, dispatchLeaseExpiresAt: new Date(now - 1).toISOString() },
+      now,
+    ),
+    true,
+  );
+  assert.equal(renderNeedsRedispatch(job, now), true);
 });

@@ -1,5 +1,10 @@
 # Idea2Impact self-presentation acceptance
 
+> Historical evidence from the deployment-v1 environment. It demonstrates the
+> media workflow but does not verify the current Bicep template, Entra
+> configuration, health probes, or cloud reconciliation. Re-run the Azure
+> runbook checks in the target tenant before deployment.
+
 ## Result
 
 The localhost-first, Azure-backed acceptance run passed. Idea2Impact generated,
@@ -61,10 +66,11 @@ caption font and bottom margin; captions remain readable and no longer obscure
 slide bullets. They still overlay the footer or bottom application controls in
 some frames, which is a non-blocking demo-polish item.
 
-## Remaining non-blocking work
+## Remaining validation
 
-- Reverify Container Apps Job status reconciliation before unattended cloud
-  rendering; one successful execution did not update the web-visible 5% state.
+- Deploy the current Bicep template to a test resource group and verify Entra
+  redirect/login, role propagation, health probes, Azure Files, and Container
+  Apps Job status reconciliation.
 - Consider adaptive caption placement when a slide has meaningful content in
   the lower safe area.
 - Expand repository evidence beyond the two selected root files when the

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import { rejectUnsafeRequest } from "@/lib/http";
 
-export function GET() {
+export function GET(request: Request) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   return NextResponse.json({
     status: "ok",
     services: {
@@ -13,6 +16,7 @@ export function GET() {
           (process.env.AZURE_SPEECH_KEY ||
             process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true"),
       ),
+      hostingMode: process.env.APP_HOSTING_MODE ?? "local",
     },
   });
 }

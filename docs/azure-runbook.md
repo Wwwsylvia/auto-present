@@ -1,190 +1,154 @@
-# Azure and localhost runbook
+# Azure runbook
 
-## Operating model
+## Topology and posture
 
-Idea2Impact runs its web application on localhost. Microsoft Foundry and Azure AI
-Speech remain server-side dependencies, and a manual Azure Container Apps Job is
-available for optional cloud rendering. The web Container App has no ingress,
-no FQDN, and a minimum replica count of zero. Do not enable external ingress
-unless authentication is configured intentionally.
+Bicep provisions ACR, Log Analytics, a Container Apps environment, an
+Azure Files share, Foundry/project/model resources, Speech, a web Container App,
+and a separate manual render Job. Web and worker use separate user-assigned
+identities and mount the same share at `/data`.
 
-## Prerequisites
+External ingress defaults to disabled and the web app scales to zero. If ingress
+is enabled, Bicep requires Entra tenant/client/secret parameters and creates
+Container Apps built-in authentication that redirects unauthenticated requests
+to Microsoft Entra ID and disallows anonymous access.
+`Configure-EntraAuth.ps1` intentionally refuses post-deployment configuration.
 
-- Azure CLI authenticated to the target tenant
-- PowerShell 7
-- Node.js 22 and npm 11
-- FFmpeg and ffprobe on `PATH`
-- Permission to deploy resource-group resources and role assignments
-- `Cognitive Services Speech User` on the Speech resource for each local
-  developer who renders narrated output
-
-The verified environment uses subscription
-`edd0c578-a7c3-4a61-9536-63273eb9bc9b`, resource group
-`rg-idea2impact-806d03f5`, and East US 2.
-
-## Resource inventory
-
-| Resource | Name | Purpose |
-| --- | --- | --- |
-| Azure Container Registry | `idea2impactxtfdg4bmi4v2macr` | Stores the shared web/worker image |
-| Log Analytics workspace | `idea2impact-xtfdg4bmi4v2m-log` | Container Apps logs |
-| Container Apps environment | `idea2impact-xtfdg4bmi4v2m-env` | Web and job runtime |
-| Storage account | `idea2impactxtfdg4bmi4v2m` | Azure Files backing store |
-| Azure Files share | `idea2impact-data` | Project, upload, manifest, status, and render files |
-| Foundry/AIServices account | `idea2impact-xtfdg4bmi4v2m-ai` | Model host |
-| Foundry project | `idea2impact-project` | Project endpoint |
-| Model deployment | `gpt-5-4-mini` | GPT-5.4 mini, version `2026-03-17` |
-| Speech account | `idea2impact-xtfdg4bmi4v2m-speech` | Narration and sentence boundaries |
-| Web managed identity | `idea2impact-xtfdg4bmi4v2m-web-id` | Foundry inference, ACR pull, job dispatch |
-| Job managed identity | `idea2impact-xtfdg4bmi4v2m-job-id` | Speech access and ACR pull |
-| Web Container App | `idea2impact-xtfdg4bmi4v2m-web` | Disabled-ingress deployment target |
-| Render job | `idea2impact-xtfdg4bmi4v2m-render` | One immutable manifest per execution |
-
-## Deploy or update infrastructure
-
-The deployment is idempotent and keeps ingress disabled unless
-`-EnableExternalIngress` is passed explicitly.
+## Deploy private localhost support
 
 ```powershell
-az login
+$operatorId = az ad signed-in-user show --query id -o tsv
 .\scripts\Deploy-Infrastructure.ps1 `
-  -SubscriptionId edd0c578-a7c3-4a61-9536-63273eb9bc9b `
-  -ResourceGroupName rg-idea2impact-806d03f5
+  -SubscriptionId <subscription-id> `
+  -ResourceGroupName <resource-group> `
+  -Bootstrap `
+  -LocalOperatorPrincipalId $operatorId
 ```
 
-Build an image in ACR and update the disabled web target and render job:
+The operator receives `Cognitive Services OpenAI User` at the Foundry account
+and `Cognitive Services Speech User` at Speech. Omit the parameter only when
+roles are managed separately.
+
+`-Bootstrap` explicitly selects the temporary hello-world image for a first
+infrastructure deployment. Subsequent runs preserve the current web image from
+the prior deployment unless `-ContainerImage` is supplied. Production changes
+should pass one immutable image explicitly.
+
+The script returns non-secret deployment outputs: registry, environment,
+storage, Foundry endpoint/project/model deployment, Speech endpoint/region, web
+app, render job, ingress state, and auth state. Start-Local consumes these
+outputs; no resource name or endpoint is hard-coded.
+
+## Entra-protected external ingress
+
+Create a single-tenant Entra web app with this callback after the target
+Container App hostname is known:
+
+`https://<container-app-host>/.auth/login/aad/callback`
+
+For a first deployment, deploy with internal ingress, obtain the generated
+internal hostname from `webHost`, configure the app registration, then redeploy.
+Bicep keeps ingress internal while it provisions Entra auth. The deployment
+script verifies auth enforcement and only then enables external ingress, so a
+failed auth deployment remains private:
+
+```powershell
+$secret = Read-Host 'Entra client secret' -AsSecureString
+.\scripts\Deploy-Infrastructure.ps1 `
+  -SubscriptionId <subscription-id> `
+  -ResourceGroupName <resource-group> `
+  -ContainerImage <registry>/<repository>:<immutable-tag> `
+  -EnableExternalIngress `
+  -EntraTenantId <tenant-id> `
+  -EntraClientId <client-id> `
+  -EntraClientSecret $secret
+```
+
+The deployment fails before resource submission if required auth inputs are
+missing. Never place the secret in a checked-in parameter file or shell history.
+Rotate it in Entra and redeploy with a new SecureString.
+
+## Reuse existing resources
+
+The deployment can target an existing resource group, including
+`rg-idea2impact-806d03f5` in subscription
+`edd0c578-a7c3-4a61-9536-63273eb9bc9b`, only when those values are passed
+explicitly. They are not defaults.
+
+Use `-AdoptExistingResources` with explicit names. The script verifies resource
+type, location, Cognitive Services kind, the Azure Files share, and the Foundry
+model deployment before Bicep runs:
+
+```powershell
+.\scripts\Deploy-Infrastructure.ps1 `
+  -SubscriptionId <subscription-id> `
+  -ResourceGroupName <resource-group> `
+  -AdoptExistingResources `
+  -RegistryName <acr> `
+  -LogAnalyticsWorkspaceName <workspace> `
+  -StorageAccountName <storage> `
+  -StorageFileShareName <share> `
+  -ContainerAppsEnvironmentName <environment> `
+  -FoundryAccountName <foundry-account> `
+  -FoundryProjectName <project> `
+  -ModelDeploymentName <deployment> `
+  -SpeechAccountName <speech> `
+  -WebContainerAppName <web-app> `
+  -RenderContainerAppJobName <render-job>
+```
+
+Safe candidates are dedicated, same-region ACR, Log Analytics, StorageV2/Azure
+Files, Container Apps environment, AIServices Foundry, SpeechServices, and the
+existing dedicated web app/job. Bicep converges their declared settings without
+deleting persisted data. Adopting a web app or job replaces its configured
+user-assigned identity set with the identities declared by this template. Do not reuse a shared resource
+when enabling ACR public access, storage shared-key access, account public
+network access, or the declared SKU/configuration would violate its owners'
+policy. Existing app/job names mean this deployment takes configuration
+ownership of those workloads. Cross-resource-group resources, incompatible
+kinds/regions/SKUs, unrelated shared apps/jobs, and resources with protected
+network policy are not adoptable by this template; create dedicated resources
+or extend the template deliberately.
+
+## Images and cloud rendering
 
 ```powershell
 .\scripts\Build-PushImage.ps1 `
-  -SubscriptionId edd0c578-a7c3-4a61-9536-63273eb9bc9b `
-  -ResourceGroupName rg-idea2impact-806d03f5 `
+  -SubscriptionId <subscription-id> `
+  -ResourceGroupName <resource-group> `
   -ImageTag <immutable-tag>
 ```
 
-The build script queues ACR builds without live log streaming and polls status.
-This avoids Azure CLI Unicode failures seen when streaming Next.js build output
-on Windows.
+The Dockerfile uses `npm ci`. Cloud render manifests, uploads, statuses, and
+outputs use the shared `/data` mount. The Azure web app can dispatch the Job by
+managed identity. A local Windows app cannot dispatch it because its local data
+directory is not that mount; this path fails clearly instead of creating an
+unreadable manifest.
 
-## Configure localhost
+The Job uses zero platform replica retries. A persisted dispatch lease prevents
+duplicate starts, and normal web polling redispatches a queued dispatch or
+rendering claim only after its lease expires. Claim-specific staging directories
+prevent a superseded worker from deleting or publishing the replacement
+worker's output.
 
-Assign the signed-in developer the Speech role once:
-
-```powershell
-$speechId = az cognitiveservices account show `
-  --subscription edd0c578-a7c3-4a61-9536-63273eb9bc9b `
-  --resource-group rg-idea2impact-806d03f5 `
-  --name idea2impact-xtfdg4bmi4v2m-speech `
-  --query id -o tsv
-$principalId = az ad signed-in-user show --query id -o tsv
-az role assignment create `
-  --assignee-object-id $principalId `
-  --assignee-principal-type User `
-  --role "Cognitive Services Speech User" `
-  --scope $speechId
-```
-
-Copy `.env.example` to `.env.local` and set:
-
-```dotenv
-FOUNDRY_PROJECT_ENDPOINT=https://idea2impact-xtfdg4bmi4v2m-ai.services.ai.azure.com/api/projects/idea2impact-project
-FOUNDRY_MODEL_DEPLOYMENT=gpt-5-4-mini
-AZURE_SPEECH_REGION=eastus2
-AZURE_SPEECH_ENDPOINT=https://idea2impact-xtfdg4bmi4v2m-speech.cognitiveservices.azure.com/
-AZURE_SPEECH_USE_MANAGED_IDENTITY=true
-RENDER_EXECUTION_MODE=local
-IDEA2IMPACT_DATA_DIR=<absolute-local-data-directory>
-```
-
-Do not add credentials to the file. Foundry and managed-identity Speech
-authentication use `DefaultAzureCredential`, which can use the Azure CLI
-session.
-
-Alternatively, the checked-in launcher applies the provisioned non-secret
-endpoints, verifies Azure CLI authentication and local prerequisites, starts the
-server, waits for health, and opens the browser:
+## Verification
 
 ```powershell
-.\scripts\Start-Local.ps1
+az deployment group show -g <resource-group> -n idea2impact-infra `
+  --query properties.outputs
+az containerapp show -g <resource-group> -n <web-app> `
+  --query "{external:properties.configuration.ingress.external,fqdn:properties.configuration.ingress.fqdn}"
+az containerapp auth show -g <resource-group> -n <web-app>
+az containerapp job execution list -g <resource-group> -n <render-job> -o table
 ```
 
-Use `-Port 3002`, `-DataDirectory <path>`, `-NoBrowser`, or `-DemoMode` as
-needed. Use `-Build` for an optimized build and localhost production launch, or
-`-Production` to reuse an existing build. The launcher does not store
-credentials; Azure SDK authentication still comes from the active Azure CLI
-session. `-DemoMode` skips the launcher's provisioned service settings but does
-not clear values already supplied by the shell or `.env.local`. See
-[Build and launch](build-and-launch.md) for the complete workflow.
+Confirm private deployments have no external ingress. For public deployments,
+confirm anonymous requests redirect to Entra and authenticated requests reach
+`/api/health`. Live Azure deployment, role propagation, Entra login, Job
+execution, and Azure Files behavior are not verified by local tests.
 
-## Optional Container Apps Job rendering
+## Rollback and teardown
 
-Set `RENDER_EXECUTION_MODE=container-apps-job` and configure
-`AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, and
-`AZURE_CONTAINER_APP_JOB_NAME`. The caller must have Container Apps Jobs
-Operator on the render job. The web and job workloads must mount the same Azure
-Files share at `/data`.
-
-Inspect executions and logs:
-
-```powershell
-az containerapp job execution list `
-  --subscription edd0c578-a7c3-4a61-9536-63273eb9bc9b `
-  --resource-group rg-idea2impact-806d03f5 `
-  --name idea2impact-xtfdg4bmi4v2m-render -o table
-
-az monitor log-analytics query `
-  --workspace idea2impact-xtfdg4bmi4v2m-log `
-  --analytics-query "ContainerAppConsoleLogs_CL | where ContainerJobName_s == 'idea2impact-xtfdg4bmi4v2m-render' | order by TimeGenerated desc | take 100"
-```
-
-The worker validates the immutable manifest, writes atomic status, and refuses
-to make a stale render current. A prior cloud execution completed while the web
-status remained at 5%; reconciliation should be reverified before depending on
-cloud mode for unattended operation.
-
-## Security and identity
-
-- Speech local authentication is disabled; use managed identity or Azure CLI
-  credentials with the Speech User role.
-- The web identity has Cognitive Services OpenAI User on Foundry, AcrPull on
-  ACR, and Container Apps Jobs Operator on the render job.
-- The job identity has Cognitive Services Speech User on Speech and AcrPull on
-  ACR.
-- Foundry and Speech credentials never reach the browser.
-- Entra application creation is not required for localhost operation. The
-  tenant requires a real internal `serviceManagementReference` for new app
-  registrations; never invent one.
-
-## Verify no public endpoint
-
-```powershell
-az containerapp show `
-  --subscription edd0c578-a7c3-4a61-9536-63273eb9bc9b `
-  --resource-group rg-idea2impact-806d03f5 `
-  --name idea2impact-xtfdg4bmi4v2m-web `
-  --query "{fqdn:properties.configuration.ingress.fqdn,external:properties.configuration.ingress.external,minReplicas:properties.template.scale.minReplicas}"
-```
-
-The expected values are null FQDN, null external ingress, and zero minimum
-replicas.
-
-## Cost control, rollback, and teardown
-
-The model deployment, Speech S0 account, ACR, Log Analytics, storage, and
-Container Apps environment can accrue charges even when web replicas are zero.
-Review Azure Cost Management and remove unused images, logs, and render files.
-Rollback uses an existing immutable ACR tag with `az containerapp update` and
-`az containerapp job update`.
-
-Delete the dedicated environment only when all retained data is no longer
-needed:
-
-```powershell
-az group delete `
-  --subscription edd0c578-a7c3-4a61-9536-63273eb9bc9b `
-  --name rg-idea2impact-806d03f5 `
-  --yes
-```
-
-Resource-group deletion removes the managed identities and scoped role
-assignments. Remove any developer role assignments outside the resource group
-separately.
+Rollback web and Job images to the same known immutable ACR tag. If an auth
+deployment fails, leave ingress disabled; do not use the deprecated post-deploy
+script. Delete the dedicated resource group only after retaining required files.
+Role assignments scoped to resources are deleted with those resources.
