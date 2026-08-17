@@ -10,6 +10,11 @@ import { removeFilesBestEffort } from "@/lib/local-files";
 
 const maxUploadSize = 100 * 1024 * 1024;
 const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const extensionsByType = new Map([
+  ["video/mp4", ".mp4"],
+  ["video/webm", ".webm"],
+  ["video/quicktime", ".mov"],
+]);
 
 export async function POST(
   request: Request,
@@ -42,12 +47,18 @@ export async function POST(
   if (upload.size <= 0 || upload.size > maxUploadSize) {
     return NextResponse.json({ error: "Demo videos must be under 100 MB" }, { status: 400 });
   }
-  const extension = path.extname(upload.name).toLowerCase() || ".mp4";
+  const extension = extensionsByType.get(upload.type);
+  if (!extension) {
+    return NextResponse.json({ error: "Unsupported demo video type" }, { status: 400 });
+  }
   const assetId = randomUUID();
   const directory = uploadDirectory(id);
   const localPath = path.join(/* turbopackIgnore: true */ directory, `${assetId}${extension}`);
   await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
+  await fs.writeFile(temporaryPath, Buffer.from(await upload.arrayBuffer()), {
+    flag: "wx",
+  });
+  let project: Awaited<ReturnType<typeof updateProject>>;
   try {
     let replacedPaths: string[] = [];
     const project = await updateProject(id, (current) => {
@@ -79,6 +90,7 @@ export async function POST(
     await removeFilesBestEffort(replacedPaths.filter((file) => file !== localPath));
     return NextResponse.json(project);
   } catch (error) {
+    await fs.rm(temporaryPath, { force: true });
     await fs.rm(localPath, { force: true });
     if (error instanceof Error && error.message === "DEMO_SLIDE_REQUIRED") {
       return NextResponse.json(
@@ -89,6 +101,16 @@ export async function POST(
     const message = error instanceof Error ? error.message : "Upload failed";
     return NextResponse.json({ error: message }, { status: 404 });
   }
+  await runBestEffort(
+    "Could not invalidate every obsolete render after replacing the demo upload",
+    () => invalidateRenderJobs(id, ""),
+  );
+  await removeFilesBestEffort(
+    existingProject.assets
+      .filter((asset) => asset.kind === "demo-video" && asset.localPath !== localPath)
+      .map((asset) => asset.localPath),
+  );
+  return NextResponse.json(project);
 }
 
 export async function DELETE(

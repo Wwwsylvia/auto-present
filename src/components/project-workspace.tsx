@@ -220,6 +220,7 @@ export function ProjectWorkspace({
       if (latest.id) setProject(latest);
       return;
     }
+
     setProject(body);
     const latestJob = [...body.renderJobs]
       .reverse()
@@ -230,6 +231,24 @@ export function ProjectWorkspace({
         : `${kind === "preview" ? "Preview" : "Final video"} rendering is in progress.`,
     );
     router.refresh();
+  }
+
+  async function retryRender(id: string) {
+    setPending(`retry-${id}`);
+    setError("");
+    const response = await fetch(`/api/render-jobs/${id}/retry`, {
+      method: "POST",
+    });
+    const body = await response.json();
+    setPending("");
+    if (!response.ok) {
+      setError(body.error ?? "The render could not be retried");
+      return;
+    }
+    setProject((current) => ({
+      ...current,
+      renderJobs: current.renderJobs.map((job) => (job.id === id ? body : job)),
+    }));
   }
 
   async function saveSlide(formData: FormData) {

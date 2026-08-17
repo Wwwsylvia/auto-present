@@ -1,5 +1,7 @@
 # Product scope
 
+Idea2Impact is a localhost-based, single-user hackathon MVP. It is not a hosted service and must not be exposed through LAN or public ingress.
+
 ## Promise
 
 Idea2Impact helps a hackathon team turn a lightweight brief into a polished presentation video without becoming a general-purpose presentation editor.

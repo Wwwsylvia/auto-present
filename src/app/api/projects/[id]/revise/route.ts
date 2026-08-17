@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { activeRevision } from "@/lib/domain";
+import {
+  activeRevision,
+  actualDurationSeconds,
+  presentationRevisionSchema,
+} from "@/lib/domain";
 import { generateRevisionPatch } from "@/lib/generate";
 import { getProject, updateProject } from "@/lib/store";
 import { publicErrorMessage, rejectUnsafeRequest } from "@/lib/http";
@@ -30,14 +34,24 @@ export async function POST(
   try {
     const patch = await generateRevisionPatch(project, instruction);
     const changes = new Map(patch.slideChanges.map((change) => [change.slideId, change.changes]));
-    const nextRevision = {
+    const nextRevision = presentationRevisionSchema.parse({
       ...revision,
       id: randomUUID(),
       version: revision.version + 1,
       createdAt: new Date().toISOString(),
       source: "foundry" as const,
       slides: revision.slides.map((slide) => ({ ...slide, ...changes.get(slide.id) })),
-    };
+    });
+    const targetDuration = project.input.durationMinutes * 60;
+    if (
+      Math.abs(actualDurationSeconds(nextRevision) - targetDuration) >
+      targetDuration * 0.1
+    ) {
+      throw new PublicError(
+        "Microsoft Foundry returned a revision outside the requested duration budget.",
+        502,
+      );
+    }
     const updated = await updateProject(id, (current) => ({
       ...current,
       revisions: [...current.revisions, nextRevision],

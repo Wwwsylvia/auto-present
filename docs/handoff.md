@@ -1,5 +1,9 @@
 # Idea2Impact handoff
 
+## Operating model
+
+Idea2Impact is localhost-only. Use `npm run dev` during development, or `npm run build` followed by `npm start` to run the optimized local build. Both commands bind the web application to `127.0.0.1` and supervise a separate local render worker. See `docs/local-operation.md` for setup, launch, validation, shutdown, and retention details.
+
 ## Current state
 
 The MVP implements a complete local workflow:

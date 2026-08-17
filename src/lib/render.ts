@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -13,6 +12,8 @@ import {
 } from "@/lib/captions";
 import { renderDirectory } from "@/lib/data-paths";
 import { activeRevision, type Project, type RenderJob, type Slide } from "@/lib/domain";
+import { renderDirectory } from "@/lib/render-queue";
+import { sentenceCues, synthesizeSpeech } from "@/lib/speech";
 
 function escapeXml(value: string): string {
   return value
@@ -403,6 +404,7 @@ export async function renderPresentation(
   }
 
   const segmentFiles: string[] = [];
+  let usedDemoAsset = false;
   let elapsed = 0;
   const captions: CaptionCue[] = [];
   const demoAsset = project.assets.find((asset) => asset.kind === "demo-video");
@@ -421,6 +423,7 @@ export async function renderPresentation(
       ? "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
       : "scale=1280:720";
     if (hasSpeech) {
+      const rawAudio = `audio-${index}-raw.wav`;
       const audio = `audio-${index}.wav`;
       const boundaries = await synthesize(slide.narration, path.join(jobDirectory, audio));
       const audioDuration = await probeDuration(audio, jobDirectory);
@@ -487,6 +490,21 @@ export async function renderPresentation(
       "-crf", kind === "preview" ? "27" : "20", "-c:a", "copy", output,
     ],
     jobDirectory,
+  );
+  const intermediateFiles = [
+    ...segmentFiles,
+    "segments.txt",
+    "joined.mp4",
+    ...revision.slides.flatMap((_slide, index) => [
+      `slide-${index}.png`,
+      `audio-${index}.wav`,
+      `audio-${index}-raw.wav`,
+    ]),
+  ];
+  await Promise.all(
+    intermediateFiles.map((file) =>
+      fs.rm(path.join(jobDirectory, file), { force: true }),
+    ),
   );
   return {
     outputPath: path.join(jobDirectory, output),

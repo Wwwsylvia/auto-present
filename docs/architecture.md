@@ -1,5 +1,7 @@
 # Architecture
 
+Idea2Impact is intentionally a **localhost-only, single-machine system**. “Production build” in this repository means an optimized local Next.js build started with `npm start`; it does not mean a hosted deployment.
+
 ## Runtime boundaries
 
 - **Next.js web application:** project workflow, editor, API routes, validation, and local orchestration.
