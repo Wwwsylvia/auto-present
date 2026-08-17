@@ -3,11 +3,16 @@ import { NextResponse } from "next/server";
 import { activeRevision } from "@/lib/domain";
 import { generateRevisionPatch } from "@/lib/generate";
 import { getProject, updateProject } from "@/lib/store";
+import { publicErrorMessage, rejectUnsafeRequest } from "@/lib/http";
+import { runBestEffort } from "@/lib/local-files";
+import { markRenderJobsStale } from "@/lib/render-jobs";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const project = await getProject(id);
   const revision = project && activeRevision(project);
@@ -38,14 +43,20 @@ export async function POST(
       revisions: [...current.revisions, nextRevision],
       activeRevisionId: nextRevision.id,
       approvedDeckRevisionId: null,
-      renderJobs: current.renderJobs.map((job) =>
-        job.status === "complete" ? { ...job, status: "stale" as const } : job,
-      ),
+      renderJobs: current.renderJobs.map((job) => ({
+        ...job,
+        status: "stale" as const,
+        progress: 0,
+        outputUrl: undefined,
+      })),
       lastError: null,
     }));
+    await runBestEffort("Could not invalidate obsolete render state", () =>
+      markRenderJobsStale(updated.renderJobs),
+    );
     return NextResponse.json({ project: updated, summary: patch.summary });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI revision failed";
+    const message = publicErrorMessage(error, "AI revision failed");
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

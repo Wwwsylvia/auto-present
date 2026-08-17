@@ -9,8 +9,6 @@ import {
   type Slide,
 } from "@/lib/domain";
 
-const foundryConfigured = process.env.NEXT_PUBLIC_FOUNDRY_CONFIGURED === "true";
-
 function formatTime(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
@@ -52,7 +50,13 @@ function SlidePreview({ slide }: { slide: Slide }) {
   );
 }
 
-export function ProjectWorkspace({ initialProject }: { initialProject: Project }) {
+export function ProjectWorkspace({
+  foundryConfigured,
+  initialProject,
+}: {
+  foundryConfigured: boolean;
+  initialProject: Project;
+}) {
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const revision = activeRevision(project);
@@ -68,6 +72,33 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
   const total = revision ? actualDurationSeconds(revision) : 0;
   const target = project.input.durationMinutes * 60;
   const durationStatus = Math.round(((total - target) / target) * 100);
+  const hasActiveRender = project.renderJobs.some(
+    (job) => job.status === "queued" || job.status === "rendering",
+  );
+
+  useEffect(() => {
+    if (!hasActiveRender) return;
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/projects/${project.id}`);
+        const body = await response.json();
+        if (!response.ok) {
+          setError({
+            area: "render",
+            message: body.error ?? "Could not refresh render status",
+          });
+          return;
+        }
+        setProject(body);
+      } catch {
+        setError({
+          area: "render",
+          message: "Could not refresh render status",
+        });
+      }
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveRender, project.id]);
 
   async function generate() {
     setPending("generate");
@@ -134,7 +165,14 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
       return;
     }
     setProject(body);
-    setNotice(`${kind === "preview" ? "Preview" : "Final video"} is ready to download.`);
+    const latestJob = [...body.renderJobs]
+      .reverse()
+      .find((job: Project["renderJobs"][number]) => job.kind === kind);
+    setNotice(
+      latestJob?.status === "complete"
+        ? `${kind === "preview" ? "Preview" : "Final video"} is ready to download.`
+        : `${kind === "preview" ? "Preview" : "Final video"} rendering is in progress.`,
+    );
     router.refresh();
   }
 
@@ -310,10 +348,18 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
               <h2>Render and download</h2>
               <p>Render a quick preview first, then create the narrated final MP4 when it looks right.</p>
               <div className="render-actions">
-                <button className="secondary" disabled={Boolean(pending)} onClick={() => void render("preview")}>
+                <button
+                  className="secondary"
+                  disabled={Boolean(pending) || hasActiveRender}
+                  onClick={() => void render("preview")}
+                >
                   {pending === "render-preview" ? "Rendering preview..." : "Render preview"}
                 </button>
-                <button className="primary" disabled={Boolean(pending)} onClick={() => void render("final")}>
+                <button
+                  className="primary"
+                  disabled={Boolean(pending) || hasActiveRender}
+                  onClick={() => void render("final")}
+                >
                   {pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span>
                 </button>
               </div>
@@ -329,7 +375,9 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
                 {project.renderJobs.map((job) => (
                   <div className={`render-result status-${job.status}`} key={job.id}>
                     <span>{job.kind} · {job.status}</span>
-                    {job.outputUrl && <a href={job.outputUrl}>Download MP4 ↓</a>}
+                    {job.status === "complete" && job.outputUrl && (
+                      <a href={job.outputUrl}>Download MP4 ↓</a>
+                    )}
                     {job.error && <small>{job.error}</small>}
                   </div>
                 ))}

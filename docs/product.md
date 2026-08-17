@@ -4,6 +4,16 @@
 
 Idea2Impact helps a hackathon team turn a lightweight brief into a polished presentation video without becoming a general-purpose presentation editor.
 
+## Delivery model
+
+Idea2Impact is primarily a single-user localhost application. The website, API
+routes, project persistence, and default renderer run on the user's machine.
+The local server can call Microsoft Foundry and Azure AI Speech with the user's
+Azure CLI identity. Optional Azure hosting supports a web Container App and
+render-job execution over shared storage; external ingress is disabled by
+default and requires Entra authentication plus explicit authorization before
+use.
+
 ## Workflow
 
 1. **Brief:** provide an idea and optional public GitHub URL. Submission immediately generates an evidence-aware deck and narration.
@@ -19,7 +29,8 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 - AI revisions cannot reference unknown slides or write unvalidated fields.
 - Public repository evidence retains its source path and commit SHA.
 - Final rendering cannot silently omit narration.
-- The product can generate its own two-minute pitch with an architecture slide, voiceover, captions, and downloadable MP4.
+- Final captions use sentence-level Azure Speech timing rather than one planned cue per slide.
+- The product can generate its own two-minute pitch within 5 seconds of the target, with an architecture slide, voiceover, captions, and downloadable MP4.
 
 ## Non-goals
 

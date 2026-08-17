@@ -1,18 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import { Project, projectSchema, type ProjectInput } from "@/lib/domain";
+import { dataDirectory } from "@/lib/data-paths";
 
-const dataDirectory = process.env.IDEA2IMPACT_DATA_DIR
-  ? path.resolve(process.env.IDEA2IMPACT_DATA_DIR)
-  : path.join(process.cwd(), ".data");
-const projectsFile = path.join(dataDirectory, "projects.json");
+import path from "node:path";
+
+const projectsFile = () => path.join(dataDirectory(), "projects.json");
 
 let writeQueue = Promise.resolve();
 
 async function readProjects(): Promise<Project[]> {
   try {
-    const raw = await fs.readFile(projectsFile, "utf8");
+    const raw = await fs.readFile(projectsFile(), "utf8");
     return projectSchema.array().parse(JSON.parse(raw));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -23,10 +22,11 @@ async function readProjects(): Promise<Project[]> {
 }
 
 async function writeProjects(projects: Project[]): Promise<void> {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const temporaryFile = `${projectsFile}.${randomUUID()}.tmp`;
+  await fs.mkdir(dataDirectory(), { recursive: true });
+  const targetFile = projectsFile();
+  const temporaryFile = `${targetFile}.${randomUUID()}.tmp`;
   await fs.writeFile(temporaryFile, JSON.stringify(projects, null, 2), "utf8");
-  await fs.rename(temporaryFile, projectsFile);
+  await fs.rename(temporaryFile, targetFile);
 }
 
 function serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
@@ -73,7 +73,7 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 
 export async function updateProject(
   id: string,
-  update: (project: Project) => Project,
+  update: (project: Project) => Project | Promise<Project>,
 ): Promise<Project> {
   return serializeWrite(async () => {
     const projects = await readProjects();
@@ -82,7 +82,7 @@ export async function updateProject(
       throw new Error("Project not found");
     }
     const next = projectSchema.parse({
-      ...update(structuredClone(projects[index])),
+      ...(await update(structuredClone(projects[index]))),
       updatedAt: new Date().toISOString(),
     });
     projects[index] = next;

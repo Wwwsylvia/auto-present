@@ -1,0 +1,101 @@
+{
+  "validGeneration": {
+    "title": "Evidence to impact",
+    "tagline": "Make the repository story clear",
+    "summary": "A concise, grounded presentation.",
+    "slides": [
+      {
+        "title": "The idea",
+        "purpose": "Introduce the idea",
+        "layout": "hero",
+        "bullets": ["Repository evidence becomes a story"],
+        "narration": "Start with the idea and its intended impact.",
+        "durationSeconds": 20,
+        "evidencePaths": ["README.md"]
+      },
+      {
+        "title": "How it works",
+        "purpose": "Explain the solution",
+        "layout": "architecture",
+        "bullets": ["Gather", "Validate", "Present"],
+        "narration": "Structured context produces a validated presentation.",
+        "durationSeconds": 20,
+        "evidencePaths": ["src/app.ts"]
+      },
+      {
+        "title": "The impact",
+        "purpose": "Close with impact",
+        "layout": "closing",
+        "bullets": ["Clearer decisions"],
+        "narration": "Close with a focused and supportable outcome.",
+        "durationSeconds": 20,
+        "evidencePaths": []
+      }
+    ]
+  },
+  "schemaInvalidGeneration": {
+    "title": "Too short",
+    "tagline": "Missing required contract shape",
+    "summary": "Only one slide is invalid.",
+    "slides": [
+      {
+        "title": "Only slide",
+        "purpose": "Be invalid",
+        "layout": "hero",
+        "bullets": [],
+        "narration": "One slide cannot form a valid presentation.",
+        "durationSeconds": 20,
+        "evidencePaths": []
+      }
+    ]
+  },
+  "validPatch": {
+    "summary": "Clarified the opening",
+    "slideChanges": [
+      {
+        "slideId": "slide-1",
+        "changes": {
+          "title": "A stronger opening",
+          "durationSeconds": 25
+        }
+      }
+    ]
+  },
+  "unknownSlidePatch": {
+    "summary": "Changed a missing slide",
+    "slideChanges": [
+      {
+        "slideId": "slide-404",
+        "changes": {
+          "title": "Unknown"
+        }
+      }
+    ]
+  },
+  "emptyPatch": {
+    "summary": "No changes",
+    "slideChanges": []
+  },
+  "invalidFieldPatch": {
+    "summary": "Used an invalid field value",
+    "slideChanges": [
+      {
+        "slideId": "slide-1",
+        "changes": {
+          "title": 42
+        }
+      }
+    ]
+  },
+  "outOfRangePatch": {
+    "summary": "Used an invalid duration",
+    "slideChanges": [
+      {
+        "slideId": "slide-1",
+        "changes": {
+          "durationSeconds": 181
+        }
+      }
+    ]
+  }
+}

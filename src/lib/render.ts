@@ -2,13 +2,17 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { DefaultAzureCredential } from "@azure/identity";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 import sharp from "sharp";
+import {
+  cuesToSrt,
+  sentenceCaptionCues,
+  type CaptionCue,
+  type SpeechBoundary,
+} from "@/lib/captions";
+import { renderDirectory } from "@/lib/data-paths";
 import { activeRevision, type Project, type RenderJob, type Slide } from "@/lib/domain";
-
-const outputRoot = process.env.IDEA2IMPACT_DATA_DIR
-  ? path.join(path.resolve(process.env.IDEA2IMPACT_DATA_DIR), "renders")
-  : path.join(process.cwd(), ".data", "renders");
 
 function escapeXml(value: string): string {
   return value
@@ -107,25 +111,53 @@ function probeDuration(file: string, cwd: string): Promise<number> {
   });
 }
 
-function synthesize(text: string, outputFile: string): Promise<void> {
+async function synthesize(text: string, outputFile: string): Promise<SpeechBoundary[]> {
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
-  if (!key || !region) {
+  if (!region) {
     return Promise.reject(new Error("Azure Speech is not configured"));
   }
-  const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
+  let speechConfig: SpeechSDK.SpeechConfig;
+  if (key) {
+    speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
+  } else if (process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true") {
+    const endpoint = process.env.AZURE_SPEECH_ENDPOINT;
+    if (!endpoint) {
+      throw new Error("Managed identity Speech requires AZURE_SPEECH_ENDPOINT");
+    }
+    speechConfig = SpeechSDK.SpeechConfig.fromEndpoint(
+      new URL(endpoint),
+      new DefaultAzureCredential(),
+    );
+  } else {
+    throw new Error("Azure Speech requires a key or managed identity configuration");
+  }
   speechConfig.speechSynthesisVoiceName =
     process.env.AZURE_SPEECH_VOICE ?? "en-US-AvaMultilingualNeural";
   speechConfig.speechSynthesisOutputFormat =
     SpeechSDK.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm;
+  speechConfig.setProperty(
+    SpeechSDK.PropertyId.SpeechServiceResponse_RequestSentenceBoundary,
+    "true",
+  );
   const audioConfig = SpeechSDK.AudioConfig.fromAudioFileOutput(outputFile);
   const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, audioConfig);
+  const boundaries: SpeechBoundary[] = [];
+  synthesizer.wordBoundary = (_sender, event) => {
+    if (event.boundaryType !== SpeechSDK.SpeechSynthesisBoundaryType.Sentence) return;
+    boundaries.push({
+      text: event.text,
+      textOffset: event.textOffset,
+      audioOffsetSeconds: event.audioOffset / 10_000_000,
+      durationSeconds: event.duration / 10_000_000,
+    });
+  };
   return new Promise((resolve, reject) => {
     synthesizer.speakTextAsync(
       text,
       (result) => {
         synthesizer.close();
-        if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) resolve();
+        if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) resolve(boundaries);
         else reject(new Error(result.errorDetails || "Azure Speech synthesis failed"));
       },
       (error) => {
@@ -136,35 +168,33 @@ function synthesize(text: string, outputFile: string): Promise<void> {
   });
 }
 
-function srtTimestamp(seconds: number): string {
-  const milliseconds = Math.round(seconds * 1000);
-  const hours = Math.floor(milliseconds / 3_600_000);
-  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
-  const secs = Math.floor((milliseconds % 60_000) / 1000);
-  const ms = milliseconds % 1000;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
-}
-
 export async function renderPresentation(
   project: Project,
   kind: RenderJob["kind"],
-  renderId = randomUUID(),
+  options: {
+    jobId?: string;
+    onProgress?: (progress: number) => Promise<void>;
+  } = {},
 ): Promise<{ job: RenderJob; outputPath: string }> {
   const revision = activeRevision(project);
   if (!revision || project.approvedDeckRevisionId !== revision.id) {
     throw new Error("Approve the current deck before rendering");
   }
-  const id = renderId;
-  const jobDirectory = path.join(outputRoot, id);
+  const id = options.jobId ?? randomUUID();
+  const jobDirectory = path.join(renderDirectory(), id);
   await fs.mkdir(jobDirectory, { recursive: true });
-  const hasSpeech = Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
+  const hasSpeech = Boolean(
+    process.env.AZURE_SPEECH_REGION &&
+      (process.env.AZURE_SPEECH_KEY ||
+        process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true"),
+  );
   if (kind === "final" && !hasSpeech) {
-    throw new Error("Configure AZURE_SPEECH_KEY and AZURE_SPEECH_REGION for a narrated final video");
+    throw new Error("Configure Azure Speech credentials and region for a narrated final video");
   }
 
   const segmentFiles: string[] = [];
   let elapsed = 0;
-  const captions: string[] = [];
+  const captions: CaptionCue[] = [];
   const closingIndex = revision.slides.length - 1;
   const demoAsset = project.assets.find((asset) => asset.kind === "demo-video");
   if (demoAsset && revision.slides[closingIndex]?.layout !== "closing") {
@@ -186,14 +216,23 @@ export async function renderPresentation(
       : "scale=1280:720";
     if (hasSpeech) {
       const audio = `audio-${index}.wav`;
-      await synthesize(slide.narration, path.join(jobDirectory, audio));
-      renderedDuration = await probeDuration(audio, jobDirectory);
+      const boundaries = await synthesize(slide.narration, path.join(jobDirectory, audio));
+      const audioDuration = await probeDuration(audio, jobDirectory);
+      renderedDuration = Math.max(duration, audioDuration);
+      captions.push(
+        ...sentenceCaptionCues(slide.narration, boundaries, audioDuration).map((cue) => ({
+          ...cue,
+          startSeconds: cue.startSeconds + elapsed,
+          endSeconds: cue.endSeconds + elapsed,
+        })),
+      );
       await run(
         "ffmpeg",
         [
-          "-y", ...visualInput, "-i", audio, "-c:v", "libx264",
+          "-y", ...visualInput, "-i", audio, "-map", "0:v:0", "-map", "1:a:0",
+          "-c:v", "libx264",
           "-c:a", "aac", "-b:a", "160k", "-pix_fmt", "yuv420p",
-          "-shortest", "-vf", visualFilter, segment,
+          "-af", "apad", "-t", String(renderedDuration), "-vf", visualFilter, segment,
         ],
         jobDirectory,
       );
@@ -202,17 +241,21 @@ export async function renderPresentation(
         "ffmpeg",
         [
           "-y", ...visualInput, "-f", "lavfi", "-i",
-          "anullsrc=channel_layout=stereo:sample_rate=48000", "-t", String(duration),
+          "anullsrc=channel_layout=stereo:sample_rate=48000",
+          "-map", "0:v:0", "-map", "1:a:0", "-t", String(duration),
           "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-vf", visualFilter, segment,
         ],
         jobDirectory,
       );
+      captions.push({
+        text: slide.narration,
+        startSeconds: elapsed,
+        endSeconds: elapsed + renderedDuration,
+      });
     }
-    captions.push(
-      `${index + 1}\n${srtTimestamp(elapsed)} --> ${srtTimestamp(elapsed + renderedDuration)}\n${slide.narration}\n`,
-    );
     elapsed += renderedDuration;
     segmentFiles.push(segment);
+    await options.onProgress?.(Math.round(((index + 1) / revision.slides.length) * 85));
   }
 
   await fs.writeFile(
@@ -220,7 +263,7 @@ export async function renderPresentation(
     segmentFiles.map((file) => `file '${file}'`).join("\n"),
     "utf8",
   );
-  await fs.writeFile(path.join(jobDirectory, "captions.srt"), captions.join("\n"), "utf8");
+  await fs.writeFile(path.join(jobDirectory, "captions.srt"), cuesToSrt(captions), "utf8");
   await run(
     "ffmpeg",
     ["-y", "-f", "concat", "-safe", "0", "-i", "segments.txt", "-c", "copy", "joined.mp4"],
@@ -231,7 +274,7 @@ export async function renderPresentation(
     "ffmpeg",
     [
       "-y", "-i", "joined.mp4", "-vf",
-      "subtitles=captions.srt:force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'",
+      "subtitles=captions.srt:force_style='FontName=Arial,FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=10'",
       "-c:v", "libx264", "-preset", kind === "preview" ? "veryfast" : "medium",
       "-crf", kind === "preview" ? "27" : "20", "-c:a", "copy", output,
     ],
@@ -245,6 +288,7 @@ export async function renderPresentation(
       kind,
       status: "complete",
       progress: 100,
+      dispatchAttempts: 0,
       outputUrl: `/api/renders/${id}`,
     },
   };
@@ -252,5 +296,5 @@ export async function renderPresentation(
 
 export function renderOutputPath(id: string): string {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid render ID");
-  return path.join(outputRoot, id, "presentation.mp4");
+  return path.join(renderDirectory(), id, "presentation.mp4");
 }

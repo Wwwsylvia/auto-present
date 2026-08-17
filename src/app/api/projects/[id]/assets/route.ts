@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { uploadDirectory } from "@/lib/data-paths";
 import { updateProject } from "@/lib/store";
+import { rejectUnsafeRequest } from "@/lib/http";
+import { removeFilesBestEffort } from "@/lib/local-files";
 
 const maxUploadSize = 100 * 1024 * 1024;
 const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime"]);
@@ -11,6 +14,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const form = await request.formData();
   const upload = form.get("file");
@@ -25,14 +30,16 @@ export async function POST(
   }
   const extension = path.extname(upload.name).toLowerCase() || ".mp4";
   const assetId = randomUUID();
-  const directory = path.join(process.cwd(), ".data", "uploads", id);
-  const localPath = path.join(directory, `${assetId}${extension}`);
+  const directory = uploadDirectory(id);
+  const localPath = path.join(/* turbopackIgnore: true */ directory, `${assetId}${extension}`);
   await fs.mkdir(directory, { recursive: true });
   await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
-  let replacedPath = "";
   try {
+    let replacedPaths: string[] = [];
     const project = await updateProject(id, (current) => {
-      replacedPath = current.assets.find((asset) => asset.kind === "demo-video")?.localPath ?? "";
+      replacedPaths = current.assets
+        .filter((asset) => asset.kind === "demo-video")
+        .map((asset) => asset.localPath);
       return {
         ...current,
         assets: [
@@ -48,13 +55,7 @@ export async function POST(
         ],
       };
     });
-    if (replacedPath && replacedPath !== localPath) {
-      try {
-        await fs.rm(replacedPath, { force: true });
-      } catch (error) {
-        console.error("Could not remove replaced demo clip", error);
-      }
-    }
+    await removeFilesBestEffort(replacedPaths.filter((file) => file !== localPath));
     return NextResponse.json(project);
   } catch (error) {
     await fs.rm(localPath, { force: true });
@@ -64,9 +65,11 @@ export async function POST(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { id } = await params;
   let removedPath = "";
   try {
@@ -77,7 +80,7 @@ export async function DELETE(
         assets: current.assets.filter((asset) => asset.kind !== "demo-video"),
       };
     });
-    if (removedPath) await fs.rm(removedPath, { force: true });
+    await removeFilesBestEffort(removedPath ? [removedPath] : []);
     return NextResponse.json(project);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not remove the demo clip";
