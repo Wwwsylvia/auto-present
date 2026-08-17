@@ -1,8 +1,16 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import {
+  createQueuedRenderJob,
+  dispatchRenderJob,
+  discardRenderJob,
+  readRenderStatus,
+  writeRenderManifest,
+  writeRenderStatus,
+  findActiveRenderJob,
+} from "@/lib/render-jobs";
 import type { RenderJob } from "@/lib/domain";
-import { renderPresentation } from "@/lib/render";
-import { getProject, updateProject } from "@/lib/store";
+import { updateProject } from "@/lib/store";
+import { publicErrorMessage, rejectUnsafeRequest } from "@/lib/http";
 
 export const maxDuration = 300;
 
@@ -10,51 +18,100 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { id } = await params;
-  const project = await getProject(id);
-  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as { kind?: string };
   const kind = body.kind === "final" ? "final" : "preview";
-  const jobId = randomUUID();
-  const queuedJob: RenderJob = {
-    id: jobId,
-    revisionId: project.activeRevisionId ?? "",
-    kind,
-    status: "queued",
-    progress: 0,
-  };
+  let job: RenderJob | undefined;
+  let created = false;
   try {
-    await updateProject(id, (current) => ({
-      ...current,
-      renderJobs: [...current.renderJobs, queuedJob],
-      lastError: null,
-    }));
-    const renderingProject = await updateProject(id, (current) => ({
-      ...current,
-      renderJobs: current.renderJobs.map((job) =>
-        job.id === jobId ? { ...job, status: "rendering" as const, progress: 10 } : job,
-      ),
-    }));
-    const { job } = await renderPresentation(renderingProject, kind, jobId);
+    await updateProject(id, async (current) => {
+      const activeJob = findActiveRenderJob(current, kind);
+      if (activeJob) {
+        job = activeJob;
+        return current;
+      }
+      const queuedJob = createQueuedRenderJob(current, kind);
+      if ((process.env.RENDER_EXECUTION_MODE ?? "local") === "local") {
+        queuedJob.dispatchLeaseExpiresAt = new Date(Date.now() + 2 * 60_000).toISOString();
+      }
+      job = queuedJob;
+      created = true;
+      const projectWithJob = {
+        ...current,
+        renderJobs: [...current.renderJobs, queuedJob],
+        lastError: null,
+      };
+      await writeRenderManifest(queuedJob, projectWithJob);
+      return projectWithJob;
+    });
+    if (!job) throw new Error("Render job registration failed");
+    if (created) await dispatchRenderJob(job.id);
+    const status = (await readRenderStatus(job.id)) ?? job;
     const updated = await updateProject(id, (current) => ({
       ...current,
-      renderJobs: current.renderJobs.map((currentJob) =>
-        currentJob.id === jobId ? job : currentJob,
+      renderJobs: current.renderJobs.map((item) =>
+        item.id === job?.id && item.status !== "stale" ? status : item,
       ),
-      lastError: null,
+      lastError:
+        current.renderJobs.find((item) => item.id === job?.id)?.status === "stale"
+          ? current.lastError
+          : (status.error ?? null),
     }));
-    return NextResponse.json(updated);
+    return NextResponse.json(updated, { status: status.status === "queued" ? 202 : 200 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Rendering failed";
-    await updateProject(id, (current) => ({
-      ...current,
-      lastError: message,
-      renderJobs: current.renderJobs.map((job) =>
-        job.id === jobId
-          ? { ...job, status: "failed" as const, error: message, progress: 0 }
-          : job,
-      ),
-    }));
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message = publicErrorMessage(error, "Rendering failed");
+    if (job && created && !(await readRenderStatus(job.id))) {
+      await updateProject(id, (current) => ({
+        ...current,
+        renderJobs: current.renderJobs.filter((item) => item.id !== job?.id),
+      })).catch(() => undefined);
+      await discardRenderJob(job.id);
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
+    if (job) {
+      const currentStatus = await readRenderStatus(job.id);
+      if (currentStatus?.status === "queued" && currentStatus.dispatchLeaseExpiresAt) {
+        const updated = await updateProject(id, (current) => ({
+          ...current,
+          renderJobs: current.renderJobs.map((item) =>
+            item.id === job?.id && item.status !== "stale" ? currentStatus : item,
+          ),
+          lastError: message,
+        }));
+        return NextResponse.json(updated, { status: 202 });
+      }
+      if (currentStatus?.status === "complete") {
+        const updated = await updateProject(id, (current) => ({
+          ...current,
+          renderJobs: current.renderJobs.map((item) =>
+            item.id === job?.id && item.status !== "stale" ? currentStatus : item,
+          ),
+          lastError: null,
+        }));
+        return NextResponse.json(updated);
+      }
+      const failed =
+        currentStatus?.status === "stale"
+          ? currentStatus
+          : { ...job, status: "failed" as const, error: message };
+      if (failed.status !== "stale") await writeRenderStatus(failed);
+      await updateProject(id, (current) => ({
+        ...current,
+        renderJobs: current.renderJobs.map((item) =>
+          item.id === job?.id && item.status !== "stale" ? failed : item,
+        ),
+        lastError: failed.status === "stale" ? current.lastError : message,
+      }));
+    } else {
+      await updateProject(id, (current) => ({ ...current, lastError: message })).catch(
+        () => undefined,
+      );
+    }
+    return NextResponse.json(
+      { error: message },
+      { status: message === "Project not found" ? 404 : 500 },
+    );
   }
 }
