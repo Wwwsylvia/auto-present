@@ -1,7 +1,22 @@
 # Idea2Impact
 
-Idea2Impact turns a project idea into an editable presentation and downloadable
-video. The safest current operating mode is a single-user localhost app.
+Idea2Impact turns a rough project idea into a structured, editable presentation
+and a downloadable MP4. It is an MVP for hackathon teams that need to spend
+their final hours building rather than assembling slides and video. The safest
+current operating mode is a single-user localhost app.
+
+## What works
+
+- Guided brief with a required idea, audience, tone, and 1–10 minute target
+- Optional bounded analysis of public GitHub repositories
+- Microsoft Foundry-backed structured presentation generation
+- Deterministic demo generation when Foundry is not configured
+- Three-stage Plan → Create → Produce workflow with approval gates
+- Revision-safe direct slide and narration editing
+- Contextual Foundry revisions expressed as validated typed patches
+- Optional MP4, WebM, or QuickTime demo-clip insertion
+- Azure AI Speech narration and FFmpeg-rendered captions
+- Silent low-quality preview in local demo mode and narrated final MP4 with Azure Speech
 
 ## Operating modes
 
@@ -48,6 +63,29 @@ az login
 Both development and production-local launches bind explicitly to
 `127.0.0.1`. Use `-Build` to build and launch production-local mode or
 `-Production` to reuse an existing build.
+
+## Configuration
+
+Copy `.env.example` to `.env.local` when launching without the helper script.
+The supported settings include:
+
+| Variable | Purpose |
+| --- | --- |
+| `APP_HOSTING_MODE` | Selects the localhost or Azure request-security boundary |
+| `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint |
+| `FOUNDRY_MODEL_DEPLOYMENT` | Deployed model name |
+| `AZURE_SPEECH_ENDPOINT` | Azure AI Speech endpoint |
+| `AZURE_SPEECH_REGION` | Azure AI Speech region |
+| `AZURE_SPEECH_KEY` | Optional local Speech key; managed identity is preferred |
+| `AZURE_SPEECH_USE_MANAGED_IDENTITY` | Enables managed-identity Speech authentication |
+| `AZURE_SPEECH_VOICE` | Optional voice; defaults to `en-US-AvaMultilingualNeural` |
+| `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
+| `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
+| `RENDER_EXECUTION_MODE` | Selects local or Container Apps Job rendering |
+
+Use Azure managed identity for Foundry and Speech authentication in hosted
+deployments. `DefaultAzureCredential` supports local Azure CLI login during
+development.
 
 ## Azure deployment
 
@@ -106,3 +144,15 @@ az bicep build --file infra/main.bicep
 Azure resource deployment and live Entra sign-in require tenant-specific
 credentials and must be validated in the target subscription; repository checks
 do not prove a live Azure deployment.
+
+## Current MVP limits
+
+- Single-user deployment with file-backed persistence and one web replica
+- Public GitHub repositories only
+- One optional demo clip
+- No PPTX import/export, accounts, sharing, collaboration, billing, or automatic browser recording
+- Local rendering runs on the user's machine; hosted rendering requires the web app and Container Apps Job to share `/data`
+- Multi-user or multi-replica hosting requires transactional metadata, durable queuing, project ownership, and stronger authorization
+
+See [product scope](docs/product.md), [architecture](docs/architecture.md),
+[AI contracts](docs/ai-contracts.md), and [handoff](docs/handoff.md).

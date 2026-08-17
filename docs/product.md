@@ -6,12 +6,13 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 
 ## Delivery model
 
-Idea2Impact is a single-user localhost application. The website, API routes,
-project persistence, and default renderer run on the user's machine. The local
-server can call Microsoft Foundry and Azure AI Speech with the user's Azure CLI
-identity. Azure does not expose the website; a disabled-ingress web Container
-App is retained as infrastructure history. Other Azure resources support
-backend AI, storage, container images, and optional render-job execution.
+Idea2Impact is primarily a single-user localhost application. The website, API
+routes, project persistence, and default renderer run on the user's machine.
+The local server can call Microsoft Foundry and Azure AI Speech with the user's
+Azure CLI identity. Optional Azure hosting supports a web Container App and
+render-job execution over shared storage; external ingress is disabled by
+default and requires Entra authentication plus explicit authorization before
+use.
 
 ## Workflow
 
