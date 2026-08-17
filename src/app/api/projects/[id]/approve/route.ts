@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { activeRevision } from "@/lib/domain";
+import { evaluateDeckQuality } from "@/lib/deck-quality";
 import { getProject, updateProject } from "@/lib/store";
 
 export async function POST(
@@ -11,6 +12,22 @@ export async function POST(
   const revision = project && activeRevision(project);
   if (!project || !revision) {
     return NextResponse.json({ error: "Generate a presentation first" }, { status: 400 });
+  }
+  const quality = evaluateDeckQuality(revision, {
+    targetDurationSeconds: project.input.durationMinutes * 60,
+    knownEvidencePaths: project.repository?.evidence.map((item) => item.path) ?? [],
+  });
+  const failedChecks = quality.checks.filter((check) => !check.passed);
+  if (failedChecks.length > 0) {
+    return NextResponse.json(
+      {
+        error: `Resolve deck quality issues before approval: ${failedChecks
+          .map((check) => check.details)
+          .join(" ")}`,
+        quality,
+      },
+      { status: 400 },
+    );
   }
   try {
     const updated = await updateProject(id, (current) => {

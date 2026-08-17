@@ -6,14 +6,16 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 
 - Guided brief with a required idea, audience, tone, and 1–10 minute target
 - Optional bounded analysis of public GitHub repositories
-- Microsoft Foundry-backed structured presentation generation
+- Microsoft Foundry-backed deck intelligence: strategy, draft, and critic-refinement passes
+- Persisted audience strategy, proof-point, demo-plan, layout, and structured visual data
 - Deterministic demo generation when Foundry is not configured
 - Three-step Brief → Review deck → Produce video workflow with one whole-deck approval
 - Revision-safe direct slide and narration editing
 - Contextual Foundry revisions expressed as validated typed patches
-- Optional MP4, WebM, or QuickTime demo-clip insertion
+- Semantic demo recommendations with setup, action, and payoff; uploads require an approved semantic demo slide
 - Azure AI Speech narration and FFmpeg-rendered captions
 - Silent low-quality preview in local demo mode and narrated final MP4 with Azure Speech
+- Layout-specific browser and MP4 rendering, plus deterministic quality and exact-duration checks
 
 ## Requirements
 
@@ -61,8 +63,10 @@ npm run build
 
 - Single-user deployment with file-backed persistence
 - Public GitHub repositories only
-- One optional demo clip
+- One optional demo clip, only for an approved deck with a semantic demo slide
 - No PPTX import/export, accounts, sharing, or automatic browser recording
 - Rendering runs in the application process locally; production should route the same immutable render input to an Azure Container Apps Job
+- Existing `presentation-v1` records are preserved but ignored by the v2 workspace. Regenerate them or remove their saved data.
+- Real Foundry generation and Azure AI Speech acceptance have not yet been run; local demo generation remains available.
 
 See [product scope](docs/product.md), [architecture](docs/architecture.md), and [AI contracts](docs/ai-contracts.md).
