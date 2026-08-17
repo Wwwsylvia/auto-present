@@ -215,6 +215,7 @@ test("runs strategy, draft, and critic passes in order and assigns metadata afte
   assert.ok(revision.slides.every((slide) => slide.id.length > 0));
   assert.equal(actualDurationSeconds(revision), 120);
   assert.ok(queue.calls.every((call) => call.system.includes("UNTRUSTED EVIDENCE DATA")));
+  assert.match(queue.calls.find((call) => call.pass === "draft")?.user ?? "", /"oneOf"/);
 });
 
 test("retries an invalid strategy response once, then continues with valid passes", async () => {
@@ -233,6 +234,74 @@ test("retries an invalid strategy response once, then continues with valid passe
     "draft:1",
     "critic:1",
   ]);
+  assert.match(queue.calls[1].user, /previous response failed validation/i);
+});
+
+test("normalizes harmless strategy verbosity and descriptive narrative stages", async () => {
+  const verboseStrategy = {
+    ...strategy(),
+    differentiators: Array.from({ length: 7 }, (_, index) => `Differentiator ${index + 1}`),
+    proofPoints: Array.from({ length: 8 }, (_, index) => ({
+      claim: `Proof ${index + 1}`,
+      evidencePaths: ["README.md"],
+    })),
+    narrativeArc: [
+      "hook: open with the outcome",
+      "problem: establish the constraint",
+      "solution: reveal the workflow",
+      "proof: ground the claim",
+      "demo: show the payoff",
+      "close: inspire action",
+    ],
+    demoPlan: {
+      recommendation: "include",
+      rationale: Array.from({ length: 80 }, () => "focused").join(" "),
+    },
+  };
+  const queue = queuedCompletion([
+    JSON.stringify(verboseStrategy),
+    JSON.stringify(draft()),
+    JSON.stringify(criticResponse()),
+  ]);
+
+  await generatePresentation(projectWithEvidence(), queue.completion);
+  const normalized = JSON.parse(queue.calls[1].user).strategy as PresentationStrategy;
+
+  assert.equal(queue.calls.length, 3);
+  assert.equal(normalized.differentiators.length, 5);
+  assert.equal(normalized.proofPoints.length, 6);
+  assert.deepEqual(normalized.narrativeArc, ["hook", "problem", "solution", "proof", "demo", "close"]);
+  assert.ok(normalized.demoPlan.rationale.length <= 360);
+});
+
+test("deterministically compacts an otherwise valid overfilled critic slide", async () => {
+  const critic = criticResponse();
+  const demo = critic.finalDeck.slides.find((slide) => slide.layout === "demo");
+  assert.ok(demo && demo.visual.type === "demo");
+  demo.bullets = Array.from({ length: 5 }, () =>
+    "A long supporting detail that repeats information already present in the visual",
+  );
+  demo.visual = {
+    type: "demo",
+    setup: Array.from({ length: 18 }, () => "setup").join(" "),
+    action: Array.from({ length: 18 }, () => "action").join(" "),
+    payoff: Array.from({ length: 18 }, () => "payoff").join(" "),
+  };
+  const queue = queuedCompletion([
+    JSON.stringify(strategy()),
+    JSON.stringify(draft()),
+    JSON.stringify(critic),
+  ]);
+
+  const revision = await generatePresentation(projectWithEvidence(), queue.completion);
+  const compactedDemo = revision.slides.find((slide) => slide.layout === "demo");
+  const quality = evaluateDeckQuality(revision, {
+    targetDurationSeconds: 120,
+    knownEvidencePaths: ["README.md"],
+  });
+
+  assert.equal(compactedDemo?.bullets.length, 0);
+  assert.equal(quality.checks.find((check) => check.name === "text-density")?.passed, true);
 });
 
 test("rejects unsupported evidence during generation after bounded retries", async () => {

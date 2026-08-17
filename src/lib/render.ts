@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { DefaultAzureCredential } from "@azure/identity";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 import sharp from "sharp";
 import { activeRevision, type Project, type RenderJob, type Slide } from "@/lib/domain";
@@ -317,13 +318,16 @@ export function audioTimingFilter(inputSeconds: number, targetSeconds: number): 
   return filters.join(",");
 }
 
-function synthesize(text: string, outputFile: string): Promise<void> {
+async function synthesize(text: string, outputFile: string): Promise<void> {
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
-  if (!key || !region) {
-    return Promise.reject(new Error("Azure Speech is not configured"));
+  const endpoint = process.env.AZURE_SPEECH_ENDPOINT;
+  if (!endpoint && (!key || !region)) {
+    throw new Error("Azure Speech is not configured");
   }
-  const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
+  const speechConfig = endpoint
+    ? SpeechSDK.SpeechConfig.fromEndpoint(new URL(endpoint), new DefaultAzureCredential())
+    : SpeechSDK.SpeechConfig.fromSubscription(key!, region!);
   speechConfig.speechSynthesisVoiceName =
     process.env.AZURE_SPEECH_VOICE ?? "en-US-AvaMultilingualNeural";
   speechConfig.speechSynthesisOutputFormat =
@@ -331,14 +335,20 @@ function synthesize(text: string, outputFile: string): Promise<void> {
   const audioConfig = SpeechSDK.AudioConfig.fromAudioFileOutput(outputFile);
   const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, audioConfig);
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      synthesizer.close();
+      reject(new Error("Azure Speech synthesis timed out after 45 seconds"));
+    }, 45_000);
     synthesizer.speakTextAsync(
       text,
       (result) => {
+        clearTimeout(timeout);
         synthesizer.close();
         if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) resolve();
         else reject(new Error(result.errorDetails || "Azure Speech synthesis failed"));
       },
       (error) => {
+        clearTimeout(timeout);
         synthesizer.close();
         reject(new Error(String(error)));
       },
@@ -367,9 +377,14 @@ export async function renderPresentation(
   const id = renderId;
   const jobDirectory = path.join(outputRoot, id);
   await fs.mkdir(jobDirectory, { recursive: true });
-  const hasSpeech = Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
+  const hasSpeech = Boolean(
+    process.env.AZURE_SPEECH_ENDPOINT ||
+      (process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION),
+  );
   if (kind === "final" && !hasSpeech) {
-    throw new Error("Configure AZURE_SPEECH_KEY and AZURE_SPEECH_REGION for a narrated final video");
+    throw new Error(
+      "Configure AZURE_SPEECH_ENDPOINT or AZURE_SPEECH_KEY and AZURE_SPEECH_REGION for a narrated final video",
+    );
   }
 
   const segmentFiles: string[] = [];

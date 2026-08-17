@@ -31,11 +31,10 @@ Copy `.env.example` to `.env.local` and configure:
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `FOUNDRY_MODEL_DEPLOYMENT`
 - `NEXT_PUBLIC_FOUNDRY_CONFIGURED=true`
-- `AZURE_SPEECH_KEY`
-- `AZURE_SPEECH_REGION`
+- `AZURE_SPEECH_ENDPOINT` for Microsoft Entra authentication, or `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`
 - Optionally `AZURE_SPEECH_VOICE` and `GITHUB_TOKEN`
 
-Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry. In Azure, use managed identity rather than storing Foundry credentials.
+Use `az login` locally so `DefaultAzureCredential` can authenticate to Foundry and Speech. In Azure, use managed identity rather than storing cloud credentials.
 
 ## Remaining work, in priority order
 

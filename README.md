@@ -42,13 +42,14 @@ Open `http://localhost:3000`. Without cloud configuration the app clearly identi
 | `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint |
 | `FOUNDRY_MODEL_DEPLOYMENT` | Deployed model name |
 | `NEXT_PUBLIC_FOUNDRY_CONFIGURED` | Set to `true` when the server variables above are configured |
-| `AZURE_SPEECH_KEY` | Azure AI Speech subscription key |
-| `AZURE_SPEECH_REGION` | Azure AI Speech region |
+| `AZURE_SPEECH_ENDPOINT` | Preferred custom Speech endpoint for Microsoft Entra authentication |
+| `AZURE_SPEECH_KEY` | Optional Azure AI Speech subscription key fallback |
+| `AZURE_SPEECH_REGION` | Speech region required with key authentication |
 | `AZURE_SPEECH_VOICE` | Optional voice; defaults to `en-US-AvaMultilingualNeural` |
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
 
-Use Azure managed identity for Foundry authentication in production. `DefaultAzureCredential` supports local Azure CLI login during development.
+Use Azure managed identity for Foundry and Speech authentication in production. `DefaultAzureCredential` supports local Azure CLI login during development. Speech key authentication remains available for resources that permit local authentication.
 
 ## Validation
 
