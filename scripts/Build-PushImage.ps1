@@ -119,13 +119,16 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($loginServer)) {
 $image = "$loginServer/${ImageRepository}:$ImageTag"
 
 if (-not $SkipWorkloadUpdate) {
-    Invoke-Az containerapp update `
-        --name $WebContainerAppName `
+    $previousJobImage = (& az containerapp job show `
+        --name $RenderJobName `
         --resource-group $ResourceGroupName `
         --subscription $SubscriptionId `
-        --image $image `
-        --only-show-errors `
-        --output none
+        --query properties.template.containers[0].image `
+        --output tsv `
+        --only-show-errors)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($previousJobImage)) {
+        throw 'Unable to resolve the currently deployed render worker image.'
+    }
 
     Invoke-Az containerapp job update `
         --name $RenderJobName `
@@ -134,6 +137,32 @@ if (-not $SkipWorkloadUpdate) {
         --image $image `
         --only-show-errors `
         --output none
+
+    try {
+        Invoke-Az containerapp update `
+            --name $WebContainerAppName `
+            --resource-group $ResourceGroupName `
+            --subscription $SubscriptionId `
+            --image $image `
+            --only-show-errors `
+            --output none
+    }
+    catch {
+        $webUpdateFailure = $_
+        try {
+            Invoke-Az containerapp job update `
+                --name $RenderJobName `
+                --resource-group $ResourceGroupName `
+                --subscription $SubscriptionId `
+                --image $previousJobImage `
+                --only-show-errors `
+                --output none
+        }
+        catch {
+            throw "Web update failed and the render worker rollback also failed. Original failure: $webUpdateFailure Rollback failure: $_"
+        }
+        throw $webUpdateFailure
+    }
 }
 
 [pscustomobject]@{

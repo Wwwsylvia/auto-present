@@ -71,9 +71,6 @@ configuration.
    - Record defects found during this run as the demo-polish backlog.
 
 3. **Improve production reliability**
-   - Bound render redispatch attempts and add terminal deadlines.
-   - Prevent duplicate active renders for the same revision and kind.
-   - Retain or snapshot replaced uploads referenced by active jobs.
    - Add signed Blob Storage URLs when moving away from local files.
    - Add Application Insights tracing and a judge-facing Foundry evaluation view.
 
@@ -93,16 +90,11 @@ configuration.
 - Persistence is JSON/file-backed and intended for a single-user demo with one web replica.
 - Public GitHub analysis is intentionally limited to selected root files.
 - Private repositories, accounts, sharing, PPTX, collaboration, billing, and automatic browser recording are out of scope.
-- Local HTML routes still need the same loopback-host protection as API routes.
-- Active render dispatch needs bounded retries and idempotency.
-- Replacing an upload can invalidate the file referenced by an active render.
-- Hosted access must restrict allowed Entra users or groups before external ingress is enabled.
 - Live Azure integration remains tenant-specific and cannot be proven by repository-only checks.
 
 ## Recommended next-session prompt
 
-> Resolve the documented security and render-lifecycle blockers, deploy the
-> Idea2Impact MVP to the target Azure tenant, verify real Microsoft Foundry
+> Deploy the Idea2Impact MVP to the target Azure tenant, verify real Microsoft Foundry
 > generation and contextual revisions, verify Azure Speech narration and
 > sentence caption timing, and complete the two-minute Idea2Impact
 > self-presentation acceptance test. Preserve the typed revision contracts,

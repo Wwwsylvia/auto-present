@@ -362,7 +362,8 @@ record manual steps honestly and do not claim these behaviors from health alone.
 
 Prerequisites: a single-tenant Entra web app, callback
 `https://<container-app-host>/.auth/login/aad/callback`, permission to update the
-app registration, and an approved test user. Capture the private state first.
+app registration, **ID tokens (used for implicit and hybrid flows)** enabled,
+and an approved test user. Capture the private state first.
 
 Resolve tenant/client metadata and read the secret without placing it in shell
 history:
@@ -371,6 +372,7 @@ history:
 $tenantId = az account show --query tenantId -o tsv
 $clientId = '<approved-entra-client-id>'
 $clientSecret = Read-Host 'Entra client secret' -AsSecureString
+$allowedUserIds = @($operatorPrincipalId)
 ```
 
 After a separate approval for public exposure:
@@ -387,6 +389,7 @@ After a separate approval for public exposure:
   -EntraTenantId $tenantId `
   -EntraClientId $clientId `
   -EntraClientSecret $clientSecret `
+  -EntraAllowedUserObjectIds $allowedUserIds `
   -LocalOperatorPrincipalId $operatorPrincipalId `
   -RegistryName $acrName `
   -LogAnalyticsWorkspaceName $logName `

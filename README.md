@@ -108,6 +108,7 @@ External ingress cannot be deployed without complete Entra configuration:
 
 ```powershell
 $secret = Read-Host 'Entra client secret' -AsSecureString
+$allowedUserId = az ad signed-in-user show --query id -o tsv
 .\scripts\Deploy-Infrastructure.ps1 `
   -SubscriptionId <subscription-id> `
   -ResourceGroupName <resource-group> `
@@ -115,10 +116,13 @@ $secret = Read-Host 'Entra client secret' -AsSecureString
   -EnableExternalIngress `
   -EntraTenantId <tenant-id> `
   -EntraClientId <client-id> `
-  -EntraClientSecret $secret
+  -EntraClientSecret $secret `
+  -EntraAllowedUserObjectIds $allowedUserId
 ```
 
-The secret is a secure Bicep parameter, stored only as a Container Apps secret,
+At least one allowed user or group object ID is required; authenticating to the
+tenant alone does not grant access. The secret is a secure Bicep parameter,
+stored only as a Container Apps secret,
 and never returned in deployment outputs. The deployment script passes it
 through a per-run process environment variable read by a temporary non-secret
 `.bicepparam` next to the Bicep template; the secret is never an Azure CLI

@@ -15,6 +15,8 @@ import {
   promoteClaimOutput,
   renderClaimDirectory,
   renderNeedsRedispatch,
+  findActiveRenderJob,
+  MAX_DISPATCH_ATTEMPTS,
 } from "@/lib/render-jobs";
 
 function approvedProject(): Project {
@@ -96,6 +98,47 @@ test("creates queued jobs only for the approved active revision", () => {
     () => createQueuedRenderJob({ ...project, approvedDeckRevisionId: null }, "final"),
     /Approve the current deck/,
   );
+});
+
+test("reuses only an active render for the same revision and kind", () => {
+  const project = approvedProject();
+  const preview = createQueuedRenderJob(project, "preview");
+  project.renderJobs.push(preview);
+  assert.equal(findActiveRenderJob(project, "preview")?.id, preview.id);
+  assert.equal(findActiveRenderJob(project, "final"), undefined);
+  project.renderJobs[0] = { ...preview, status: "failed" };
+  assert.equal(findActiveRenderJob(project, "preview"), undefined);
+});
+
+test("render manifests snapshot uploaded assets", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-manifest-assets-"));
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const project = approvedProject();
+    const source = path.join(directory, "upload.mp4");
+    await writeFile(source, "video-input");
+    project.assets.push({
+      id: "asset-id",
+      kind: "demo-video",
+      name: "demo.mp4",
+      mimeType: "video/mp4",
+      size: 11,
+      localPath: source,
+    });
+    const job = createQueuedRenderJob(project, "preview");
+    await writeRenderManifest(job, project);
+    await rm(source);
+    const manifest = JSON.parse(
+      await readFile(path.join(directory, "jobs", `${job.id}.manifest.json`), "utf8"),
+    ) as { project: Project };
+    assert.notEqual(manifest.project.assets[0].localPath, source);
+    assert.equal(await readFile(manifest.project.assets[0].localPath, "utf8"), "video-input");
+  } finally {
+    if (previous === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("refuses localhost-triggered Container Apps rendering", async () => {
@@ -233,4 +276,60 @@ test("identifies only expired render and dispatch leases for redispatch", () => 
     true,
   );
   assert.equal(renderNeedsRedispatch(job, now), true);
+  assert.equal(
+    renderNeedsRedispatch({ ...job, dispatchAttempts: MAX_DISPATCH_ATTEMPTS }, now),
+    false,
+  );
+});
+
+test("reconciliation terminalizes exhausted cloud dispatches", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-exhausted-"));
+  const previousDirectory = process.env.IDEA2IMPACT_DATA_DIR;
+  const previousHosting = process.env.APP_HOSTING_MODE;
+  const previousMode = process.env.RENDER_EXECUTION_MODE;
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  process.env.APP_HOSTING_MODE = "azure";
+  process.env.RENDER_EXECUTION_MODE = "container-apps-job";
+  try {
+    const project = approvedProject();
+    const job = {
+      ...createQueuedRenderJob(project, "preview"),
+      dispatchAttempts: MAX_DISPATCH_ATTEMPTS,
+      dispatchLeaseExpiresAt: new Date(Date.now() - 1).toISOString(),
+    };
+    project.renderJobs.push(job);
+    await writeRenderManifest(job, project);
+    await writeRenderStatus(job);
+    const reconciled = await reconcileRenderJobs(project);
+    assert.equal(reconciled[0].status, "failed");
+    assert.match(reconciled[0].error ?? "", /3 dispatch attempts/);
+    await assert.rejects(
+      access(path.join(directory, "jobs", `${job.id}.manifest.json`)),
+    );
+  } finally {
+    if (previousDirectory === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previousDirectory;
+    if (previousHosting === undefined) delete process.env.APP_HOSTING_MODE;
+    else process.env.APP_HOSTING_MODE = previousHosting;
+    if (previousMode === undefined) delete process.env.RENDER_EXECUTION_MODE;
+    else process.env.RENDER_EXECUTION_MODE = previousMode;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("reconciliation terminalizes legacy active jobs without sidecars", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-missing-status-"));
+  const previous = process.env.IDEA2IMPACT_DATA_DIR;
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  try {
+    const project = approvedProject();
+    project.renderJobs.push(createQueuedRenderJob(project, "preview"));
+    const reconciled = await reconcileRenderJobs(project);
+    assert.equal(reconciled[0].status, "failed");
+    assert.match(reconciled[0].error ?? "", /unavailable after restart or upgrade/);
+  } finally {
+    if (previous === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -246,10 +246,18 @@ export function ProjectWorkspace({
                 <p>Preview renders are silent when Azure Speech is not configured. Final renders always require narrated audio.</p>
               </div>
               <div className="render-actions">
-                <button className="secondary" disabled={Boolean(pending)} onClick={() => render("preview")}>
+                <button
+                  className="secondary"
+                  disabled={Boolean(pending) || hasActiveRender}
+                  onClick={() => render("preview")}
+                >
                   {pending === "render-preview" ? "Rendering preview..." : "Render preview"}
                 </button>
-                <button className="primary" disabled={Boolean(pending)} onClick={() => render("final")}>
+                <button
+                  className="primary"
+                  disabled={Boolean(pending) || hasActiveRender}
+                  onClick={() => render("final")}
+                >
                   {pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span>
                 </button>
               </div>
@@ -292,9 +300,14 @@ export function ProjectWorkspace({
                 {pending === "save" ? "Saving..." : "Save as new revision"}
               </button>
             </form>
-            {project.stage !== "produce" && (
+            {(project.stage !== "produce" ||
+              project.approvedDeckRevisionId !== project.activeRevisionId) && (
               <button className="primary" disabled={Boolean(pending)} onClick={() => invoke("approve")} type="button">
-                {project.stage === "plan" ? "Approve plan & create" : "Approve deck & produce"}
+                {project.stage === "plan"
+                  ? "Approve plan & create"
+                  : project.stage === "produce"
+                    ? "Reapprove deck"
+                    : "Approve deck & produce"}
                 <span>→</span>
               </button>
             )}

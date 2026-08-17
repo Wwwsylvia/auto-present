@@ -69,6 +69,7 @@ export const renderJobSchema = z.object({
   kind: z.enum(["preview", "final"]),
   status: z.enum(["queued", "rendering", "complete", "failed", "stale"]),
   progress: z.number().min(0).max(100),
+  dispatchAttempts: z.number().int().nonnegative().default(0),
   outputUrl: z.string().optional(),
   error: z.string().optional(),
   claimToken: z.string().uuid().optional(),

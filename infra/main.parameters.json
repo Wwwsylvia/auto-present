@@ -11,6 +11,12 @@
     "enableExternalIngress": {
       "value": false
     },
+    "entraAllowedUserObjectIds": {
+      "value": []
+    },
+    "entraAllowedGroupObjectIds": {
+      "value": []
+    },
     "modelCapacity": {
       "value": 10
     },

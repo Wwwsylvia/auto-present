@@ -52,6 +52,10 @@ Container App hostname is known:
 
 `https://<container-app-host>/.auth/login/aad/callback`
 
+In the app registration's **Authentication** settings, enable **ID tokens
+(used for implicit and hybrid flows)**. The deployment script verifies this
+setting before mutating Azure resources.
+
 For a first deployment, deploy with internal ingress, obtain the generated
 internal hostname from `webHost`, configure the app registration, then redeploy.
 Bicep keeps ingress internal while it provisions Entra auth. The deployment
@@ -60,6 +64,7 @@ failed auth deployment remains private:
 
 ```powershell
 $secret = Read-Host 'Entra client secret' -AsSecureString
+$allowedUserId = az ad signed-in-user show --query id -o tsv
 .\scripts\Deploy-Infrastructure.ps1 `
   -SubscriptionId <subscription-id> `
   -ResourceGroupName <resource-group> `
@@ -67,11 +72,13 @@ $secret = Read-Host 'Entra client secret' -AsSecureString
   -EnableExternalIngress `
   -EntraTenantId <tenant-id> `
   -EntraClientId <client-id> `
-  -EntraClientSecret $secret
+  -EntraClientSecret $secret `
+  -EntraAllowedUserObjectIds $allowedUserId
 ```
 
-The deployment fails before resource submission if required auth inputs are
-missing. Never place the secret in a checked-in parameter file or shell history.
+The deployment fails before resource submission if authentication inputs or an
+explicit allowed-user/group policy are missing. Never place the secret in a
+checked-in parameter file or shell history.
 The script stores it briefly in a uniquely named process environment variable;
 a temporary gitignored `.bicepparam` beside `main.bicep` contains only
 `readEnvironmentVariable(...)`, never the value. It is compiled before any Azure

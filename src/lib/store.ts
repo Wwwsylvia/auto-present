@@ -73,7 +73,7 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 
 export async function updateProject(
   id: string,
-  update: (project: Project) => Project,
+  update: (project: Project) => Project | Promise<Project>,
 ): Promise<Project> {
   return serializeWrite(async () => {
     const projects = await readProjects();
@@ -82,7 +82,7 @@ export async function updateProject(
       throw new Error("Project not found");
     }
     const next = projectSchema.parse({
-      ...update(structuredClone(projects[index])),
+      ...(await update(structuredClone(projects[index]))),
       updatedAt: new Date().toISOString(),
     });
     projects[index] = next;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { rejectUnsafeRequest } from "@/lib/http";
+import { localLaunchMetadata } from "@/lib/local-launch";
 
 export function GET(request: Request) {
   const rejection = rejectUnsafeRequest(request);
@@ -18,5 +19,6 @@ export function GET(request: Request) {
       ),
       hostingMode: process.env.APP_HOSTING_MODE ?? "local",
     },
+    localLaunch: localLaunchMetadata(),
   });
 }

@@ -25,6 +25,12 @@ param entraClientId string = ''
 @secure()
 param entraClientSecret string = ''
 
+@description('Microsoft Entra user object IDs allowed to access the hosted application.')
+param entraAllowedUserObjectIds array = []
+
+@description('Microsoft Entra group object IDs allowed to access the hosted application.')
+param entraAllowedGroupObjectIds array = []
+
 @description('Optional local operator object ID that receives Foundry inference and Speech data-plane roles.')
 param localOperatorPrincipalId string = ''
 
@@ -111,6 +117,12 @@ var dataMountPath = '/data'
 var validatedEntraTenantId = enableExternalIngress && empty(entraTenantId) ? fail('entraTenantId is required when enableExternalIngress is true.') : entraTenantId
 var validatedEntraClientId = enableExternalIngress && empty(entraClientId) ? fail('entraClientId is required when enableExternalIngress is true.') : entraClientId
 var validatedEntraClientSecret = enableExternalIngress && empty(entraClientSecret) ? fail('entraClientSecret is required when enableExternalIngress is true.') : entraClientSecret
+var validatedEntraAllowedPrincipals = enableExternalIngress && empty(entraAllowedUserObjectIds) && empty(entraAllowedGroupObjectIds)
+  ? fail('At least one Entra allowed user or group object ID is required when enableExternalIngress is true.')
+  : {
+      identities: entraAllowedUserObjectIds
+      groups: entraAllowedGroupObjectIds
+    }
 var authenticationLoginEndpoint = endsWith(az.environment().authentication.loginEndpoint, '/')
   ? az.environment().authentication.loginEndpoint
   : '${az.environment().authentication.loginEndpoint}/'
@@ -551,6 +563,9 @@ resource webAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (enab
             validatedEntraClientId
             'api://${validatedEntraClientId}'
           ]
+          defaultAuthorizationPolicy: {
+            allowedPrincipals: validatedEntraAllowedPrincipals
+          }
         }
       }
     }

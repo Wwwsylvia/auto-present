@@ -22,6 +22,10 @@ param(
 
     [System.Security.SecureString]$EntraClientSecret,
 
+    [string[]]$EntraAllowedUserObjectIds = @(),
+
+    [string[]]$EntraAllowedGroupObjectIds = @(),
+
     [string]$LocalOperatorPrincipalId,
 
     [ValidateSet('User', 'ServicePrincipal')]
@@ -250,8 +254,9 @@ if ($AdoptExistingResources) {
 if ($EnableExternalIngress -and (
     [string]::IsNullOrWhiteSpace($EntraTenantId) -or
     [string]::IsNullOrWhiteSpace($EntraClientId) -or
-    $null -eq $EntraClientSecret)) {
-    throw 'External ingress requires -EntraTenantId, -EntraClientId, and -EntraClientSecret before any Azure mutation.'
+    $null -eq $EntraClientSecret -or
+    ($EntraAllowedUserObjectIds.Count -eq 0 -and $EntraAllowedGroupObjectIds.Count -eq 0))) {
+    throw 'External ingress requires Entra tenant, client, secret, and at least one allowed user or group object ID before any Azure mutation.'
 }
 if ($EnableExternalIngress) {
     $azureCliVersionJson = (& az version --output json --only-show-errors)
@@ -266,6 +271,13 @@ if ($EnableExternalIngress) {
         $parsedAzureCliVersion -lt [version]'2.54.0') {
         throw 'External ingress deployment requires Azure CLI 2.54.0 or newer for secure .bicepparam overrides.'
     }
+    $idTokenIssuance = (& az ad app show `
+        --id $EntraClientId `
+        --query web.implicitGrantSettings.enableIdTokenIssuance `
+        --output tsv)
+    if ($LASTEXITCODE -ne 0 -or "$idTokenIssuance".Trim().ToLowerInvariant() -ne 'true') {
+        throw 'The Entra app registration must enable ID tokens for implicit and hybrid flows before external ingress is deployed.'
+    }
 }
 
 Invoke-Az bicep build --file $templateFile --stdout --only-show-errors | Out-Null
@@ -277,6 +289,8 @@ $deploymentArguments = @(
     '--subscription', $resolvedSubscriptionId,
     '--template-file', $templateFile
 )
+$entraAllowedUsersJson = ConvertTo-Json -InputObject @($EntraAllowedUserObjectIds) -Compress
+$entraAllowedGroupsJson = ConvertTo-Json -InputObject @($EntraAllowedGroupObjectIds) -Compress
 
 $secretEnvironmentVariable = $null
 $temporaryParameterFile = $null
@@ -329,6 +343,8 @@ param entraClientSecret = readEnvironmentVariable('$secretEnvironmentVariable')
         "enableExternalIngress=$($EnableExternalIngress.IsPresent.ToString().ToLowerInvariant())",
         "entraTenantId=$EntraTenantId",
         "entraClientId=$EntraClientId",
+        "entraAllowedUserObjectIds=$entraAllowedUsersJson",
+        "entraAllowedGroupObjectIds=$entraAllowedGroupsJson",
         "modelCapacity=$ModelCapacity",
         "foundryProjectName=$FoundryProjectName",
         "modelDeploymentName=$ModelDeploymentName",
@@ -416,6 +432,14 @@ try {
             $authConfig.identityProviders.azureActiveDirectory.enabled -ne $true -or
             $authConfig.identityProviders.azureActiveDirectory.registration.clientId -ne $EntraClientId) {
             throw 'Entra authentication is not enforcing sign-in; external ingress remains disabled.'
+        }
+        $deployedUsers = @($authConfig.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.identities)
+        $deployedGroups = @($authConfig.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.groups)
+        $requestedUsers = @($EntraAllowedUserObjectIds | Sort-Object)
+        $requestedGroups = @($EntraAllowedGroupObjectIds | Sort-Object)
+        if (($requestedUsers -join "`n") -ne (@($deployedUsers | Sort-Object) -join "`n") -or
+            ($requestedGroups -join "`n") -ne (@($deployedGroups | Sort-Object) -join "`n")) {
+            throw 'Entra allowed users or groups do not match the requested authorization policy; external ingress remains disabled.'
         }
         $externalIngressEnableAttempted = $true
         Invoke-Az containerapp ingress enable `

@@ -285,6 +285,7 @@ export async function renderPresentation(
       kind,
       status: "complete",
       progress: 100,
+      dispatchAttempts: 0,
       outputUrl: `/api/renders/${id}`,
     },
   };

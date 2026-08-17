@@ -73,4 +73,8 @@ because local paths are not shared with the worker.
 - **Production build missing:** run once with `-Build`.
 - **Port occupied:** choose another with `-Port`.
 - **Existing wildcard/LAN listener:** stop it before launch. The launcher reuses
-  a healthy process only when every listener on the selected port is loopback.
+  a process only when every listener is loopback and its launch protocol, demo
+  or Azure-backed mode, development or production mode, data directory, and
+  service/render fingerprint exactly match. Manual, older, or mismatched
+  processes are left running; choose another port or stop the reported process
+  explicitly. `-Build` always requires a free port.

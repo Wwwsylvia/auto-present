@@ -2,10 +2,12 @@
 
 ## Trust boundaries
 
-- Local mode is unauthenticated but loopback-only by bind address and API
-  Host/Origin checks. LAN exposure is not a supported default.
+- Local mode is unauthenticated but loopback-only by bind address and
+  proxy/API Host and Origin checks covering HTML, RSC, and API requests. LAN
+  exposure is not a supported default.
 - Azure external ingress is opt-in and cannot be parameterized without complete
-  Entra configuration in the same Bicep deployment.
+  Entra configuration and at least one allowed user or group in the same Bicep
+  deployment.
 - Foundry, Speech, ACR, and Job operations use scoped managed identities in
   Azure. Local Azure-backed mode uses the operator's `DefaultAzureCredential`.
 - GitHub evidence and model output are untrusted. Evidence is bounded; generated
@@ -27,9 +29,10 @@ DNS rebinding and cross-site requests are limited by loopback Host/Origin
 validation. The loopback aliases `localhost`, `127.0.0.1`, and `[::1]` are
 equivalent only when their protocol and effective port match; non-loopback
 names, protocol or port mismatches, and malformed headers are rejected.
-Stale render workers are limited by claim tokens and expiring leases. Upload
-replacement commits metadata before deleting the prior file, so cleanup failure
-cannot leave project metadata pointing to a deleted asset. Render identifiers
+Stale render workers are limited by claim tokens, expiring leases, and three
+dispatch attempts. Registration reuses an active job for the same revision and
+kind. Each immutable render manifest owns a snapshot of its uploaded inputs, so
+replacing the project upload cannot break an active worker. Render identifiers
 are UUID-validated and output URLs do not expose filesystem paths.
 
 ## Remaining limitations

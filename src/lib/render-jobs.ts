@@ -20,18 +20,7 @@ const renderManifestSchema = z.object({
   project: projectSchema,
 });
 
-const jobResourceSchema = z.object({
-  properties: z.object({
-    template: z.object({
-      containers: z.array(
-        z.object({
-          name: z.string(),
-          env: z.array(z.object({ name: z.string() }).passthrough()).optional(),
-        }).passthrough(),
-      ),
-    }).passthrough(),
-  }),
-});
+export const MAX_DISPATCH_ATTEMPTS = 3;
 
 function validateJobId(id: string): string {
   return z.uuid().parse(id);
@@ -49,12 +38,34 @@ function statusPath(id: string): string {
   return path.join(jobsDirectory(), `${validateJobId(id)}.status.json`);
 }
 
+function manifestAssetDirectory(id: string): string {
+  return path.join(jobsDirectory(), `${validateJobId(id)}.assets`);
+}
+
 function claimLockPath(id: string): string {
   return path.join(jobsDirectory(), `${validateJobId(id)}.claim.lock`);
 }
 
 function claimTransitionLockPath(id: string): string {
   return path.join(jobsDirectory(), `${validateJobId(id)}.claim-transition.lock`);
+}
+
+async function cleanupRenderInputs(id: string): Promise<void> {
+  await Promise.all([
+    fs.rm(manifestPath(id), { force: true }),
+    fs.rm(manifestAssetDirectory(id), { recursive: true, force: true }),
+  ]);
+  const entries = await fs.readdir(renderDirectory()).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  await Promise.all(
+    entries
+      .filter((entry) => entry.startsWith(`${validateJobId(id)}.`))
+      .map((entry) =>
+        fs.rm(path.join(renderDirectory(), entry), { recursive: true, force: true }),
+      ),
+  );
 }
 
 export function renderClaimDirectory(id: string, claimToken: string): string {
@@ -76,6 +87,7 @@ export function createQueuedRenderJob(project: Project, kind: RenderJob["kind"])
   if (!revision || project.approvedDeckRevisionId !== revision.id) {
     throw new Error("Approve the current deck before rendering");
   }
+
   const id = randomUUID();
   return {
     id,
@@ -83,22 +95,51 @@ export function createQueuedRenderJob(project: Project, kind: RenderJob["kind"])
     kind,
     status: "queued",
     progress: 0,
+    dispatchAttempts: 0,
     outputUrl: `/api/renders/${id}`,
   };
+}
+
+export function findActiveRenderJob(
+  project: Project,
+  kind: RenderJob["kind"],
+): RenderJob | undefined {
+  return project.renderJobs.find(
+    (job) =>
+      job.revisionId === project.activeRevisionId &&
+      job.kind === kind &&
+      (job.status === "queued" || job.status === "rendering"),
+  );
 }
 
 export async function writeRenderManifest(
   job: RenderJob,
   project: Project,
 ): Promise<void> {
-  const manifest = renderManifestSchema.parse({
-    id: job.id,
-    createdAt: new Date().toISOString(),
-    kind: job.kind,
-    project,
-  });
-  await writeJsonAtomic(manifestPath(job.id), manifest);
-  await writeRenderStatus(job);
+  const assetDirectory = manifestAssetDirectory(job.id);
+  const manifestProject = structuredClone(project);
+  try {
+    manifestProject.assets = await Promise.all(
+      manifestProject.assets.map(async (asset) => {
+        const extension = path.extname(asset.localPath);
+        const snapshotPath = path.join(assetDirectory, `${asset.id}${extension}`);
+        await fs.mkdir(assetDirectory, { recursive: true });
+        await fs.copyFile(asset.localPath, snapshotPath);
+        return { ...asset, localPath: snapshotPath };
+      }),
+    );
+    const manifest = renderManifestSchema.parse({
+      id: job.id,
+      createdAt: new Date().toISOString(),
+      kind: job.kind,
+      project: manifestProject,
+    });
+    await writeJsonAtomic(manifestPath(job.id), manifest);
+    await writeRenderStatus(job);
+  } catch (error) {
+    await fs.rm(assetDirectory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function writeRenderStatus(job: RenderJob): Promise<void> {
@@ -139,7 +180,6 @@ async function withClaimTransition<T>(id: string, operation: () => Promise<T>): 
 
 async function claimRenderJob(
   id: string,
-  manifest: z.infer<typeof renderManifestSchema>,
 ): Promise<{ claimToken: string; job: RenderJob }> {
   return withClaimTransition(id, async () => {
     const current = await readRenderStatus(id);
@@ -173,14 +213,10 @@ async function claimRenderJob(
     } finally {
       await lock.close();
     }
-    const baseJob = createQueuedRenderJob(manifest.project, manifest.kind);
     const job: RenderJob = {
-      ...baseJob,
-      id: manifest.id,
-      revisionId: activeRevision(manifest.project)!.id,
+      ...current,
       status: "rendering",
       progress: 5,
-      outputUrl: `/api/renders/${manifest.id}`,
       claimToken,
       leaseExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
       dispatchLeaseExpiresAt: undefined,
@@ -199,7 +235,7 @@ export async function executeRenderJob(id: string): Promise<RenderJob> {
   const manifest = renderManifestSchema.parse(
     JSON.parse(await fs.readFile(manifestPath(id), "utf8")),
   );
-  const { claimToken, job } = await claimRenderJob(id, manifest);
+  const { claimToken, job } = await claimRenderJob(id);
   const claimDirectory = renderClaimDirectory(id, claimToken);
   try {
     const result = await renderPresentation(manifest.project, manifest.kind, {
@@ -227,8 +263,10 @@ export async function executeRenderJob(id: string): Promise<RenderJob> {
       throw new Error("Render claim is no longer active");
     }
     await releaseClaimLock(id, claimToken);
+    await cleanupRenderInputs(id);
     return result.job;
   } catch (error) {
+    let terminalized = false;
     await withClaimTransition(id, async () => {
       const latest = await readRenderStatus(id);
       if (latest?.claimToken !== claimToken || latest.status === "stale") return;
@@ -241,11 +279,49 @@ export async function executeRenderJob(id: string): Promise<RenderJob> {
         leaseExpiresAt: undefined,
       };
       await writeRenderStatus(failed);
+      terminalized = true;
     });
     await fs.rm(claimDirectory, { recursive: true, force: true });
     await releaseClaimLock(id, claimToken);
+    if (terminalized) await cleanupRenderInputs(id);
     throw error;
   }
+}
+
+export async function executeNextRenderJob(): Promise<RenderJob | undefined> {
+  const files = await fs.readdir(jobsDirectory()).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  const candidates = (
+    await Promise.all(
+      files
+        .filter((file) => file.endsWith(".status.json"))
+        .map(async (file) => readRenderStatus(file.slice(0, -".status.json".length))),
+    )
+  )
+    .filter(
+      (job): job is RenderJob =>
+        Boolean(job && (job.status === "queued" || job.status === "rendering")),
+    )
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  for (const job of candidates) {
+    try {
+      return await executeRenderJob(job.id);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === "Render job is already claimed" ||
+          error.message === "Render job claim is being established" ||
+          error.message === "Render job is stale")
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return undefined;
 }
 
 export async function promoteClaimOutput(
@@ -285,7 +361,7 @@ async function releaseClaimLock(id: string, claimToken: string): Promise<void> {
   }
 }
 
-async function startContainerAppsJob(id: string): Promise<void> {
+async function startContainerAppsJob(): Promise<void> {
   const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
   const resourceGroup = process.env.AZURE_RESOURCE_GROUP;
   const jobName = process.env.AZURE_CONTAINER_APP_JOB_NAME;
@@ -307,26 +383,11 @@ async function startContainerAppsJob(id: string): Promise<void> {
     Authorization: `Bearer ${token.token}`,
     "Content-Type": "application/json",
   };
-  const getResponse = await fetch(`${resourceUrl}?api-version=${apiVersion}`, { headers });
-  if (!getResponse.ok) {
-    throw new Error(`Could not read Container Apps Job: ${await getResponse.text()}`);
-  }
-  const resource = jobResourceSchema.parse(await getResponse.json());
-  const template = {
-    containers: resource.properties.template.containers.map((container) => ({
-      ...container,
-      env: [
-        ...(container.env ?? []).filter((item) => item.name !== "RENDER_JOB_ID"),
-        { name: "RENDER_JOB_ID", value: id },
-      ],
-    })),
-  };
   const startResponse = await fetch(
     `${resourceUrl}/start?api-version=${apiVersion}`,
     {
       method: "POST",
       headers,
-      body: JSON.stringify(template),
     },
   );
   if (!startResponse.ok) {
@@ -349,17 +410,24 @@ export async function dispatchRenderJob(id: string): Promise<void> {
     const shouldDispatch = await prepareCloudDispatch(id);
     if (!shouldDispatch) return;
     try {
-      await startContainerAppsJob(id);
+      await startContainerAppsJob();
     } catch (error) {
       await withClaimTransition(id, async () => {
         const current = await readRenderStatus(id);
         if (current?.status !== "queued") return;
+        const exhausted = current.dispatchAttempts >= MAX_DISPATCH_ATTEMPTS;
         await writeRenderStatus({
           ...current,
+          status: exhausted ? "failed" : "queued",
           error: error instanceof Error ? error.message : "Cloud dispatch failed",
-          dispatchLeaseExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+          dispatchLeaseExpiresAt: exhausted
+            ? undefined
+            : new Date(Date.now() + 30_000).toISOString(),
         });
       });
+      if ((await readRenderStatus(id))?.status === "failed") {
+        await cleanupRenderInputs(id);
+      }
       throw error;
     }
     return;
@@ -369,6 +437,7 @@ export async function dispatchRenderJob(id: string): Promise<void> {
     return withClaimTransition(id, async () => {
       const current = await readRenderStatus(id);
       if (!current || current.status === "stale" || current.status === "complete") return false;
+      if (current.status === "failed") return false;
       const now = Date.now();
       if (
         current.status === "rendering" &&
@@ -387,10 +456,22 @@ export async function dispatchRenderJob(id: string): Promise<void> {
       if (current.status === "rendering") {
         await fs.rm(claimLockPath(id), { force: true });
       }
+      if (current.dispatchAttempts >= MAX_DISPATCH_ATTEMPTS) {
+        await writeRenderStatus({
+          ...current,
+          status: "failed",
+          error: `Cloud rendering stopped after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+          claimToken: undefined,
+          leaseExpiresAt: undefined,
+          dispatchLeaseExpiresAt: undefined,
+        });
+        return false;
+      }
       await writeRenderStatus({
         ...current,
         status: "queued",
         progress: 0,
+        dispatchAttempts: current.dispatchAttempts + 1,
         claimToken: undefined,
         leaseExpiresAt: undefined,
         dispatchLeaseExpiresAt: new Date(now + 2 * 60_000).toISOString(),
@@ -426,6 +507,7 @@ export async function markRenderJobsStale(jobs: RenderJob[]): Promise<void> {
       } catch {
         console.warn(`[Idea2Impact] Could not remove stale render output ${job.id}`);
       }
+      await cleanupRenderInputs(job.id);
     }),
   );
 }
@@ -434,6 +516,7 @@ export async function discardRenderJob(id: string): Promise<void> {
   await Promise.all([
     fs.rm(manifestPath(id), { force: true }),
     fs.rm(statusPath(id), { force: true }),
+    fs.rm(manifestAssetDirectory(id), { recursive: true, force: true }),
     fs.rm(claimLockPath(id), { force: true }),
     fs.rm(claimTransitionLockPath(id), { force: true }),
     fs.rm(path.join(renderDirectory(), validateJobId(id)), {
@@ -448,6 +531,54 @@ export async function reconcileRenderJobs(project: Project): Promise<RenderJob[]
     project.renderJobs.map(async (job) => {
       if (job.status === "stale") return job;
       let status = await readRenderStatus(job.id);
+      if (!status && (job.status === "queued" || job.status === "rendering")) {
+        status = {
+          ...job,
+          status: "failed",
+          error: "Render state was unavailable after restart or upgrade",
+          claimToken: undefined,
+          leaseExpiresAt: undefined,
+          dispatchLeaseExpiresAt: undefined,
+        };
+        await writeRenderStatus(status);
+      }
+      if (status?.status === "queued" || status?.status === "rendering") {
+        await withClaimTransition(job.id, async () => {
+          const current = await readRenderStatus(job.id);
+          if (current?.status !== "queued" && current?.status !== "rendering") {
+            status = current;
+            return;
+          }
+          const cloudExhausted =
+            current.dispatchAttempts >= MAX_DISPATCH_ATTEMPTS &&
+            ((current.status === "queued" &&
+              (!current.dispatchLeaseExpiresAt ||
+                Date.parse(current.dispatchLeaseExpiresAt) <= Date.now())) ||
+              (current.status === "rendering" &&
+                Boolean(current.leaseExpiresAt) &&
+                Date.parse(current.leaseExpiresAt!) <= Date.now()));
+          const localLeaseExpired =
+            current.status === "rendering" &&
+            process.env.RENDER_EXECUTION_MODE !== "container-apps-job" &&
+            Boolean(current.leaseExpiresAt) &&
+            Date.parse(current.leaseExpiresAt!) <= Date.now();
+          if (!cloudExhausted && !localLeaseExpired) {
+            status = current;
+            return;
+          }
+          status = {
+            ...current,
+            status: "failed",
+            error: cloudExhausted
+              ? `Cloud rendering stopped after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`
+              : "Local rendering stopped after its worker lease expired",
+            claimToken: undefined,
+            leaseExpiresAt: undefined,
+            dispatchLeaseExpiresAt: undefined,
+          };
+          await writeRenderStatus(status);
+        });
+      }
       const abandoned =
         process.env.APP_HOSTING_MODE === "azure" &&
         process.env.RENDER_EXECUTION_MODE === "container-apps-job" &&
@@ -461,6 +592,9 @@ export async function reconcileRenderJobs(project: Project): Promise<RenderJob[]
           );
         });
         status = await readRenderStatus(job.id);
+      }
+      if (status?.status === "complete" || status?.status === "failed") {
+        await cleanupRenderInputs(job.id);
       }
       return status?.revisionId === job.revisionId
         ? {
@@ -479,18 +613,19 @@ export function renderNeedsRedispatch(
   now: number,
 ): boolean {
   return Boolean(
-    (status?.status === "rendering" &&
-      status.leaseExpiresAt &&
-      Date.parse(status.leaseExpiresAt) <= now) ||
+    (status?.dispatchAttempts ?? 0) < MAX_DISPATCH_ATTEMPTS &&
+      ((status?.status === "rendering" &&
+        status.leaseExpiresAt &&
+        Date.parse(status.leaseExpiresAt) <= now) ||
       (status?.status === "queued" &&
         (!status.dispatchLeaseExpiresAt ||
-          Date.parse(status.dispatchLeaseExpiresAt) <= now)),
+          Date.parse(status.dispatchLeaseExpiresAt) <= now))),
   );
 }
 
 export async function isRenderDownloadAvailable(id: string): Promise<boolean> {
   const status = await readRenderStatus(id);
-  if (status?.status !== "complete") return false;
+  if (status && status.status !== "complete") return false;
   try {
     await fs.access(path.join(renderDirectory(), validateJobId(id), "presentation.mp4"));
     return true;
