@@ -4,12 +4,12 @@
 
 The MVP implements a complete local workflow:
 
-1. Create a project from an idea, audience, tone, duration, and optional public GitHub URL; generation begins immediately.
-2. Generate a typed presentation using Microsoft Foundry when configured, or deterministic demo content otherwise, with visible progress feedback.
-3. Review and directly edit slides and narration using immutable revisions, then approve the entire deck with one clear action.
+1. Create a project from an idea, audience, tone, duration, and optional public GitHub URL.
+2. Generate a typed presentation using Microsoft Foundry when configured, or deterministic demo content otherwise.
+3. Review and directly edit slides and narration using immutable revisions.
 4. Request validated contextual revisions from Foundry.
-5. Move through the Brief, Review deck, and Produce video stages.
-6. Optionally upload a demo clip that appears immediately before the closing slide.
+5. Approve the plan and deck through the Plan, Create, and Produce stages.
+6. Optionally upload a demo clip.
 7. Render and download a captioned MP4. Local previews can be silent; final output requires Azure AI Speech.
 
 The product is named **Idea2Impact**. The completed MVP was developed on `agents/idea2impact-mvp`.

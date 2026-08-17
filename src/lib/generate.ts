@@ -122,7 +122,7 @@ export async function generatePresentation(project: Project): Promise<Presentati
       {
         role: "system",
         content:
-          "You are the Idea2Impact presentation copilot. Return only valid JSON. Ground claims in supplied evidence, respect the exact duration budget, create 3-12 concise slides, and always make the final slide a closing layout.",
+          "You are the Idea2Impact presentation copilot. Return only valid JSON. Ground claims in supplied evidence, respect the exact duration budget, and create 3-12 concise slides.",
       },
       {
         role: "user",
@@ -163,11 +163,7 @@ export async function generatePresentation(project: Project): Promise<Presentati
     createdAt: new Date().toISOString(),
     promptVersion,
     source: "foundry",
-    slides: generated.slides.map((slide, index) => ({
-      ...slide,
-      id: randomUUID(),
-      layout: index === generated.slides.length - 1 ? "closing" : slide.layout,
-    })),
+    slides: generated.slides.map((slide) => ({ ...slide, id: randomUUID() })),
   });
 }
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import { getProject } from "@/lib/store";
@@ -11,11 +12,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   return (
     <main className="project-page">
       <header className="site-header project-header">
-        {/* Full navigation lets the browser protect unsaved slide edits. */}
-        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-        <a className="brand" href="/">
+        <Link className="brand" href="/">
           <span className="brand-mark">I2</span>Idea2Impact
-        </a>
+        </Link>
         <div className="project-meta">
           <span>{project.input.audience}</span>
           <span>{project.input.durationMinutes} min</span>

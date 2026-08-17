@@ -148,13 +148,12 @@ function srtTimestamp(seconds: number): string {
 export async function renderPresentation(
   project: Project,
   kind: RenderJob["kind"],
-  renderId = randomUUID(),
 ): Promise<{ job: RenderJob; outputPath: string }> {
   const revision = activeRevision(project);
   if (!revision || project.approvedDeckRevisionId !== revision.id) {
     throw new Error("Approve the current deck before rendering");
   }
-  const id = renderId;
+  const id = randomUUID();
   const jobDirectory = path.join(outputRoot, id);
   await fs.mkdir(jobDirectory, { recursive: true });
   const hasSpeech = Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
@@ -165,23 +164,20 @@ export async function renderPresentation(
   const segmentFiles: string[] = [];
   let elapsed = 0;
   const captions: string[] = [];
-  const closingIndex = revision.slides.length - 1;
-  const demoAsset = project.assets.find((asset) => asset.kind === "demo-video");
-  if (demoAsset && revision.slides[closingIndex]?.layout !== "closing") {
-    throw new Error("The demo clip needs a closing slide in the approved deck");
-  }
-  const demoIndex = closingIndex - 1;
   for (const [index, slide] of revision.slides.entries()) {
     const image = `slide-${index}.png`;
     const segment = `segment-${index}.mp4`;
     await sharp(Buffer.from(slideSvg(slide, index))).png().toFile(path.join(jobDirectory, image));
     const duration = slide.durationSeconds;
     let renderedDuration = duration;
-    const segmentDemoAsset = index === demoIndex ? demoAsset : undefined;
-    const visualInput = segmentDemoAsset
-      ? ["-stream_loop", "-1", "-i", segmentDemoAsset.localPath]
+    const demoAsset =
+      slide.layout === "demo"
+        ? project.assets.find((asset) => asset.kind === "demo-video")
+        : undefined;
+    const visualInput = demoAsset
+      ? ["-stream_loop", "-1", "-i", demoAsset.localPath]
       : ["-loop", "1", "-i", image];
-    const visualFilter = segmentDemoAsset
+    const visualFilter = demoAsset
       ? "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
       : "scale=1280:720";
     if (hasSpeech) {
