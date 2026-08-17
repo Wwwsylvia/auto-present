@@ -324,14 +324,14 @@ export function audioTimingFilter(inputSeconds: number, targetSeconds: number): 
 async function synthesize(text: string, outputFile: string): Promise<SpeechBoundary[]> {
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
-  if (!region) {
-    return Promise.reject(new Error("Azure Speech is not configured"));
-  }
+  const endpoint = process.env.AZURE_SPEECH_ENDPOINT;
   let speechConfig: SpeechSDK.SpeechConfig;
   if (key) {
+    if (!region) {
+      throw new Error("Key-based Azure Speech requires AZURE_SPEECH_REGION");
+    }
     speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
   } else if (process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true") {
-    const endpoint = process.env.AZURE_SPEECH_ENDPOINT;
     if (!endpoint) {
       throw new Error("Managed identity Speech requires AZURE_SPEECH_ENDPOINT");
     }
@@ -363,14 +363,20 @@ async function synthesize(text: string, outputFile: string): Promise<SpeechBound
     });
   };
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      synthesizer.close();
+      reject(new Error("Azure Speech synthesis timed out after 45 seconds"));
+    }, 45_000);
     synthesizer.speakTextAsync(
       text,
       (result) => {
+        clearTimeout(timeout);
         synthesizer.close();
         if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) resolve(boundaries);
         else reject(new Error(result.errorDetails || "Azure Speech synthesis failed"));
       },
       (error) => {
+        clearTimeout(timeout);
         synthesizer.close();
         reject(new Error(String(error)));
       },
@@ -394,12 +400,14 @@ export async function renderPresentation(
   const jobDirectory = path.join(renderDirectory(), id);
   await fs.mkdir(jobDirectory, { recursive: true });
   const hasSpeech = Boolean(
-    process.env.AZURE_SPEECH_REGION &&
-      (process.env.AZURE_SPEECH_KEY ||
+    (process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION) ||
+      (process.env.AZURE_SPEECH_ENDPOINT &&
         process.env.AZURE_SPEECH_USE_MANAGED_IDENTITY === "true"),
   );
   if (kind === "final" && !hasSpeech) {
-    throw new Error("Configure Azure Speech credentials and region for a narrated final video");
+    throw new Error(
+      "Configure managed-identity Azure Speech or AZURE_SPEECH_KEY and AZURE_SPEECH_REGION for a narrated final video",
+    );
   }
 
   const segmentFiles: string[] = [];

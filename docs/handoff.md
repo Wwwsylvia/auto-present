@@ -54,6 +54,11 @@ or deployment outputs. Use `az login` locally so `DefaultAzureCredential` can
 authenticate to Foundry and Speech. In Azure, use managed identity rather than
 storing service credentials.
 
+- `FOUNDRY_PROJECT_ENDPOINT`
+- `FOUNDRY_MODEL_DEPLOYMENT`
+- `AZURE_SPEECH_ENDPOINT` with `AZURE_SPEECH_USE_MANAGED_IDENTITY=true`, or `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`
+- Optionally `AZURE_SPEECH_VOICE` and `GITHUB_TOKEN`
+
 See `.env.example` and the build-and-launch guide for the complete supported
 configuration.
 
