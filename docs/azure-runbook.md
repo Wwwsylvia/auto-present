@@ -1,5 +1,9 @@
 # Azure runbook
 
+For a gated, copy-paste validation sequence against existing resources, use the
+[Azure integration testing guide](azure-integration-testing.md). It requires
+human review of `what-if` before any mutation and prohibits resource deletion.
+
 ## Topology and posture
 
 Bicep provisions ACR, Log Analytics, a Container Apps environment, an
@@ -40,6 +44,9 @@ outputs; no resource name or endpoint is hard-coded.
 
 ## Entra-protected external ingress
 
+This path requires Azure CLI 2.54.0 or newer so `.bicepparam` values can be
+combined safely with non-secret inline overrides.
+
 Create a single-tenant Entra web app with this callback after the target
 Container App hostname is known:
 
@@ -65,7 +72,12 @@ $secret = Read-Host 'Entra client secret' -AsSecureString
 
 The deployment fails before resource submission if required auth inputs are
 missing. Never place the secret in a checked-in parameter file or shell history.
-Rotate it in Entra and redeploy with a new SecureString.
+The script stores it briefly in a uniquely named process environment variable;
+a temporary gitignored `.bicepparam` beside `main.bicep` contains only
+`readEnvironmentVariable(...)`, never the value. It is compiled before any Azure
+mutation. The environment variable and file are cleared in `finally`, and the
+secret is not included in Azure CLI process arguments. Rotate it in Entra and
+redeploy with a new `SecureString`.
 
 ## Reuse existing resources
 

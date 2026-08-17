@@ -123,6 +123,44 @@ function Assert-ResourceNameIntent {
     }
 }
 
+function Restore-PrivateIngressAndVerify {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ContainerAppName,
+
+        [Parameter(Mandatory)]
+        [string]$ResourceGroup,
+
+        [Parameter(Mandatory)]
+        [string]$Subscription
+    )
+
+    & az containerapp ingress enable `
+        --name $ContainerAppName `
+        --resource-group $ResourceGroup `
+        --subscription $Subscription `
+        --type internal `
+        --target-port 3000 `
+        --transport auto `
+        --only-show-errors `
+        --output none
+    $restoreExitCode = $LASTEXITCODE
+
+    $externalState = (& az containerapp show `
+        --name $ContainerAppName `
+        --resource-group $ResourceGroup `
+        --subscription $Subscription `
+        --query properties.configuration.ingress.external `
+        --output tsv `
+        --only-show-errors)
+    $verifyExitCode = $LASTEXITCODE
+    if ($restoreExitCode -ne 0 -or
+        $verifyExitCode -ne 0 -or
+        "$externalState".Trim().ToLowerInvariant() -ne 'false') {
+        throw 'Unable to verify that internal-only ingress was restored after a deployment failure.'
+    }
+}
+
 $templateFile = Join-Path $PSScriptRoot '..\infra\main.bicep'
 if (-not (Test-Path -LiteralPath $templateFile)) {
     throw "Bicep template not found at $templateFile"
@@ -209,69 +247,117 @@ if ($AdoptExistingResources) {
     }
 }
 
-Invoke-Az group create `
-    --name $ResourceGroupName `
-    --location $Location `
-    --subscription $resolvedSubscriptionId `
-    --tags @Tags `
-    --only-show-errors `
-    --output none
-
-Invoke-Az bicep build --file $templateFile --stdout --only-show-errors | Out-Null
-
 if ($EnableExternalIngress -and (
     [string]::IsNullOrWhiteSpace($EntraTenantId) -or
     [string]::IsNullOrWhiteSpace($EntraClientId) -or
     $null -eq $EntraClientSecret)) {
-    throw 'External ingress requires -EntraTenantId, -EntraClientId, and -EntraClientSecret in the same deployment.'
+    throw 'External ingress requires -EntraTenantId, -EntraClientId, and -EntraClientSecret before any Azure mutation.'
 }
+if ($EnableExternalIngress) {
+    $azureCliVersionJson = (& az version --output json --only-show-errors)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to determine the Azure CLI version.'
+    }
+    $azureCliVersionDocument = $azureCliVersionJson | ConvertFrom-Json
+    $azureCliVersionText = $azureCliVersionDocument.'azure-cli'
+    $parsedAzureCliVersion = $null
+    if ([string]::IsNullOrWhiteSpace($azureCliVersionText) -or
+        -not [version]::TryParse($azureCliVersionText, [ref]$parsedAzureCliVersion) -or
+        $parsedAzureCliVersion -lt [version]'2.54.0') {
+        throw 'External ingress deployment requires Azure CLI 2.54.0 or newer for secure .bicepparam overrides.'
+    }
+}
+
+Invoke-Az bicep build --file $templateFile --stdout --only-show-errors | Out-Null
 
 $deploymentArguments = @(
     'deployment', 'group', 'create',
     '--name', $DeploymentName,
     '--resource-group', $ResourceGroupName,
     '--subscription', $resolvedSubscriptionId,
-    '--template-file', $templateFile,
-    '--parameters',
-    "namePrefix=$NamePrefix",
-    "location=$Location",
-    "containerImage=$ContainerImage",
-    "enableExternalIngress=$($EnableExternalIngress.IsPresent.ToString().ToLowerInvariant())",
-    "modelCapacity=$ModelCapacity",
-    "foundryProjectName=$FoundryProjectName",
-    "modelDeploymentName=$ModelDeploymentName",
-    "modelName=$ModelName",
-    "modelVersion=$ModelVersion",
-    "localOperatorPrincipalId=$LocalOperatorPrincipalId",
-    "localOperatorPrincipalType=$LocalOperatorPrincipalType",
-    "registryName=$RegistryName",
-    "logAnalyticsWorkspaceName=$LogAnalyticsWorkspaceName",
-    "storageName=$StorageAccountName",
-    "storageFileShareName=$StorageFileShareName",
-    "containerAppsEnvironmentName=$ContainerAppsEnvironmentName",
-    "foundryAccountName=$FoundryAccountName",
-    "speechAccountName=$SpeechAccountName",
-    "webContainerAppName=$WebContainerAppName",
-    "renderContainerAppJobName=$RenderContainerAppJobName"
+    '--template-file', $templateFile
 )
 
+$secretEnvironmentVariable = $null
+$temporaryParameterFile = $null
 $secretPointer = [IntPtr]::Zero
 try {
     if ($EnableExternalIngress) {
-        $secretPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($EntraClientSecret)
-        $plainSecret = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($secretPointer)
-        $deploymentArguments += @(
-            "entraTenantId=$EntraTenantId",
-            "entraClientId=$EntraClientId",
-            "entraClientSecret=$plainSecret"
-        )
-    }
+        $secretEnvironmentVariable = "IDEA2IMPACT_ENTRA_SECRET_$([Guid]::NewGuid().ToString('N').ToUpperInvariant())"
+        $temporaryParameterFile = Join-Path `
+            (Split-Path -Parent $templateFile) `
+            "idea2impact-$([Guid]::NewGuid().ToString('N')).bicepparam"
+        $parameterContent = @"
+using './main.bicep'
 
+param containerImage = 'overridden-by-command-line'
+param entraClientSecret = readEnvironmentVariable('$secretEnvironmentVariable')
+"@
+        [System.IO.File]::WriteAllText(
+            $temporaryParameterFile,
+            $parameterContent,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $secretPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($EntraClientSecret)
+        try {
+            $plainSecret = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($secretPointer)
+            [Environment]::SetEnvironmentVariable(
+                $secretEnvironmentVariable,
+                $plainSecret,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+        finally {
+            $plainSecret = $null
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($secretPointer)
+            $secretPointer = [IntPtr]::Zero
+        }
+        & az bicep build-params `
+            --file $temporaryParameterFile `
+            --stdout `
+            --only-show-errors | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Secure Entra parameter compilation failed before Azure mutation.'
+        }
+        $deploymentArguments += @('--parameters', $temporaryParameterFile)
+    }
     $deploymentArguments += @(
+        '--parameters',
+        "namePrefix=$NamePrefix",
+        "location=$Location",
+        "containerImage=$ContainerImage",
+        "enableExternalIngress=$($EnableExternalIngress.IsPresent.ToString().ToLowerInvariant())",
+        "entraTenantId=$EntraTenantId",
+        "entraClientId=$EntraClientId",
+        "modelCapacity=$ModelCapacity",
+        "foundryProjectName=$FoundryProjectName",
+        "modelDeploymentName=$ModelDeploymentName",
+        "modelName=$ModelName",
+        "modelVersion=$ModelVersion",
+        "localOperatorPrincipalId=$LocalOperatorPrincipalId",
+        "localOperatorPrincipalType=$LocalOperatorPrincipalType",
+        "registryName=$RegistryName",
+        "logAnalyticsWorkspaceName=$LogAnalyticsWorkspaceName",
+        "storageName=$StorageAccountName",
+        "storageFileShareName=$StorageFileShareName",
+        "containerAppsEnvironmentName=$ContainerAppsEnvironmentName",
+        "foundryAccountName=$FoundryAccountName",
+        "speechAccountName=$SpeechAccountName",
+        "webContainerAppName=$WebContainerAppName",
+        "renderContainerAppJobName=$RenderContainerAppJobName",
         '--query', 'properties.outputs',
         '--output', 'json',
         '--only-show-errors'
     )
+
+    Invoke-Az group create `
+        --name $ResourceGroupName `
+        --location $Location `
+        --subscription $resolvedSubscriptionId `
+        --tags @Tags `
+        --only-show-errors `
+        --output none
+
     $deploymentJson = (& az @deploymentArguments)
     if ($LASTEXITCODE -ne 0) {
         throw 'Azure resource group deployment failed.'
@@ -279,79 +365,122 @@ try {
 }
 finally {
     $plainSecret = $null
-    if ($secretPointer -ne [IntPtr]::Zero) {
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($secretPointer)
+    $parameterContent = $null
+    try {
+        if ($secretEnvironmentVariable) {
+            [Environment]::SetEnvironmentVariable(
+                $secretEnvironmentVariable,
+                $null,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
+    finally {
+        try {
+            if ($temporaryParameterFile -and (Test-Path -LiteralPath $temporaryParameterFile)) {
+                Remove-Item -LiteralPath $temporaryParameterFile -Force -ErrorAction Stop
+            }
+        }
+        finally {
+            if ($secretPointer -ne [IntPtr]::Zero) {
+                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($secretPointer)
+            }
+        }
     }
 }
 
-$outputs = $deploymentJson | ConvertFrom-Json
+$externalIngressEnableAttempted = $false
+try {
+    $outputs = $deploymentJson | ConvertFrom-Json
 
-if ($EnableExternalIngress) {
-    $authJson = (& az containerapp auth show `
+    if ($EnableExternalIngress) {
+        $authJson = (& az containerapp auth show `
+            --name $outputs.webContainerAppName.value `
+            --resource-group $ResourceGroupName `
+            --subscription $resolvedSubscriptionId `
+            --output json `
+            --only-show-errors)
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Entra authentication could not be verified; external ingress remains disabled.'
+        }
+        $auth = $authJson | ConvertFrom-Json
+        $authConfig = if ($auth.PSObject.Properties.Name -contains 'properties') {
+            $auth.properties
+        }
+        else {
+            $auth
+        }
+        if ($authConfig.platform.enabled -ne $true -or
+            $authConfig.globalValidation.unauthenticatedClientAction -ne 'RedirectToLoginPage' -or
+            $authConfig.globalValidation.redirectToProvider -ne 'azureactivedirectory' -or
+            $authConfig.identityProviders.azureActiveDirectory.enabled -ne $true -or
+            $authConfig.identityProviders.azureActiveDirectory.registration.clientId -ne $EntraClientId) {
+            throw 'Entra authentication is not enforcing sign-in; external ingress remains disabled.'
+        }
+        $externalIngressEnableAttempted = $true
+        Invoke-Az containerapp ingress enable `
+            --name $outputs.webContainerAppName.value `
+            --resource-group $ResourceGroupName `
+            --subscription $resolvedSubscriptionId `
+            --type external `
+            --target-port 3000 `
+            --transport auto `
+            --only-show-errors `
+            --output none
+    }
+
+    $webStateJson = (& az containerapp show `
         --name $outputs.webContainerAppName.value `
         --resource-group $ResourceGroupName `
         --subscription $resolvedSubscriptionId `
+        --query '{host:properties.configuration.ingress.fqdn,external:properties.configuration.ingress.external}' `
         --output json `
         --only-show-errors)
     if ($LASTEXITCODE -ne 0) {
-        throw 'Entra authentication could not be verified; external ingress remains disabled.'
+        throw 'Unable to verify the final Container App ingress state.'
     }
-    $auth = $authJson | ConvertFrom-Json
-    $authConfig = if ($auth.properties) { $auth.properties } else { $auth }
-    if ($authConfig.platform.enabled -ne $true -or
-        $authConfig.globalValidation.unauthenticatedClientAction -ne 'RedirectToLoginPage' -or
-        $authConfig.globalValidation.redirectToProvider -ne 'azureactivedirectory' -or
-        $authConfig.identityProviders.azureActiveDirectory.enabled -ne $true -or
-        $authConfig.identityProviders.azureActiveDirectory.registration.clientId -ne $EntraClientId) {
-        throw 'Entra authentication is not enforcing sign-in; external ingress remains disabled.'
+    $webState = $webStateJson | ConvertFrom-Json
+    if ($EnableExternalIngress -and $webState.external -ne $true) {
+        throw 'External ingress was requested but could not be verified.'
     }
-    Invoke-Az containerapp ingress enable `
-        --name $outputs.webContainerAppName.value `
-        --resource-group $ResourceGroupName `
-        --subscription $resolvedSubscriptionId `
-        --type external `
-        --target-port 3000 `
-        --transport auto `
-        --only-show-errors `
-        --output none
-}
+    if (-not $EnableExternalIngress -and $webState.external -eq $true) {
+        throw 'External ingress remained enabled unexpectedly.'
+    }
 
-$webStateJson = (& az containerapp show `
-    --name $outputs.webContainerAppName.value `
-    --resource-group $ResourceGroupName `
-    --subscription $resolvedSubscriptionId `
-    --query '{host:properties.configuration.ingress.fqdn,external:properties.configuration.ingress.external}' `
-    --output json `
-    --only-show-errors)
-if ($LASTEXITCODE -ne 0) {
-    throw 'Unable to verify the final Container App ingress state.'
+    [pscustomobject]@{
+        SubscriptionId       = $resolvedSubscriptionId
+        ResourceGroupName    = $ResourceGroupName
+        RegistryName         = $outputs.registryName.value
+        RegistryLoginServer  = $outputs.registryLoginServer.value
+        EnvironmentName      = $outputs.containerAppsEnvironmentName.value
+        StorageAccountName   = $outputs.storageAccountName.value
+        FoundryAccountName   = $outputs.foundryAccountName.value
+        FoundryProjectName   = $outputs.foundryProjectName.value
+        FoundryProjectHost   = ([uri]$outputs.foundryProjectEndpoint.value).Host
+        FoundryProjectEndpoint = $outputs.foundryProjectEndpoint.value
+        ModelDeploymentName  = $outputs.modelDeploymentName.value
+        SpeechAccountName    = $outputs.speechAccountName.value
+        SpeechEndpoint       = $outputs.speechEndpoint.value
+        SpeechRegion         = $outputs.speechRegion.value
+        WebContainerAppName  = $outputs.webContainerAppName.value
+        WebHost              = $webState.host
+        ExternalIngress      = $webState.external
+        EntraAuthentication  = $outputs.entraAuthenticationEnabled.value
+        RenderJobName        = $outputs.renderJobName.value
+    }
 }
-$webState = $webStateJson | ConvertFrom-Json
-if ($EnableExternalIngress -and $webState.external -ne $true) {
-    throw 'External ingress was requested but could not be verified.'
-}
-if (-not $EnableExternalIngress -and $webState.external -eq $true) {
-    throw 'External ingress remained enabled unexpectedly.'
-}
-
-[pscustomobject]@{
-    SubscriptionId       = $resolvedSubscriptionId
-    ResourceGroupName    = $ResourceGroupName
-    RegistryName         = $outputs.registryName.value
-    RegistryLoginServer  = $outputs.registryLoginServer.value
-    EnvironmentName      = $outputs.containerAppsEnvironmentName.value
-    StorageAccountName   = $outputs.storageAccountName.value
-    FoundryAccountName   = $outputs.foundryAccountName.value
-    FoundryProjectName   = $outputs.foundryProjectName.value
-    FoundryProjectHost   = ([uri]$outputs.foundryProjectEndpoint.value).Host
-    FoundryProjectEndpoint = $outputs.foundryProjectEndpoint.value
-    ModelDeploymentName  = $outputs.modelDeploymentName.value
-    SpeechAccountName    = $outputs.speechAccountName.value
-    SpeechEndpoint       = $outputs.speechEndpoint.value
-    SpeechRegion         = $outputs.speechRegion.value
-    WebContainerAppName  = $outputs.webContainerAppName.value
-    WebHost              = $webState.host
-    ExternalIngress      = $webState.external
-    EntraAuthentication  = $outputs.entraAuthenticationEnabled.value
-    RenderJobName        = $outputs.renderJobName.value
+catch {
+    $deploymentFailure = $_
+    if ($EnableExternalIngress -and $externalIngressEnableAttempted) {
+        try {
+            Restore-PrivateIngressAndVerify `
+                -ContainerAppName $outputs.webContainerAppName.value `
+                -ResourceGroup $ResourceGroupName `
+                -Subscription $resolvedSubscriptionId
+        }
+        catch {
+            throw "Deployment failed and private-ingress rollback could not be verified. Original failure: $deploymentFailure Rollback failure: $_"
+        }
+    }
+    throw $deploymentFailure
 }

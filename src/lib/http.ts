@@ -6,6 +6,22 @@ function isLoopback(hostname: string): boolean {
   return loopbackHosts.has(hostname.toLowerCase());
 }
 
+function effectivePort(url: URL): string {
+  if (url.port) return url.port;
+  if (url.protocol === "http:") return "80";
+  if (url.protocol === "https:") return "443";
+  return "";
+}
+
+function isEquivalentLoopbackOrigin(left: URL, right: URL): boolean {
+  return (
+    isLoopback(left.hostname) &&
+    isLoopback(right.hostname) &&
+    left.protocol === right.protocol &&
+    effectivePort(left) === effectivePort(right)
+  );
+}
+
 export function rejectUnsafeRequest(request: Request): NextResponse | undefined {
   if (process.env.APP_HOSTING_MODE === "azure") return undefined;
 
@@ -18,10 +34,13 @@ export function rejectUnsafeRequest(request: Request): NextResponse | undefined 
     hostUrl = undefined;
   }
   if (
-    !isLoopback(requestUrl.hostname) ||
     !hostUrl ||
-    !isLoopback(hostUrl.hostname) ||
-    hostUrl.origin !== requestUrl.origin
+    hostUrl.username ||
+    hostUrl.password ||
+    hostUrl.pathname !== "/" ||
+    hostUrl.search ||
+    hostUrl.hash ||
+    !isEquivalentLoopbackOrigin(hostUrl, requestUrl)
   ) {
     return NextResponse.json(
       { error: "Idea2Impact only accepts local requests in localhost mode" },
@@ -33,7 +52,14 @@ export function rejectUnsafeRequest(request: Request): NextResponse | undefined 
   if (origin) {
     try {
       const originUrl = new URL(origin);
-      if (!isLoopback(originUrl.hostname) || originUrl.origin !== requestUrl.origin) {
+      if (
+        originUrl.username ||
+        originUrl.password ||
+        originUrl.pathname !== "/" ||
+        originUrl.search ||
+        originUrl.hash ||
+        !isEquivalentLoopbackOrigin(originUrl, hostUrl)
+      ) {
         return NextResponse.json(
           { error: "Cross-origin requests are not allowed" },
           { status: 403 },

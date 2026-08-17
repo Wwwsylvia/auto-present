@@ -81,12 +81,16 @@ $secret = Read-Host 'Entra client secret' -AsSecureString
 ```
 
 The secret is a secure Bicep parameter, stored only as a Container Apps secret,
-and never returned in deployment outputs. Post-deployment auth configuration is
-disabled to avoid an unauthenticated exposure window.
+and never returned in deployment outputs. The deployment script passes it
+through a per-run process environment variable read by a temporary non-secret
+`.bicepparam` next to the Bicep template; the secret is never an Azure CLI
+argument, and both artifacts are cleared in `finally`. Post-deployment auth
+configuration is disabled to avoid an unauthenticated exposure window.
 
 See [build and launch](docs/build-and-launch.md), the
 [Azure runbook](docs/azure-runbook.md), [architecture](docs/architecture.md),
-and [security](docs/security.md).
+[security](docs/security.md), and the gated
+[Azure integration testing guide](docs/azure-integration-testing.md).
 
 ## Validation
 

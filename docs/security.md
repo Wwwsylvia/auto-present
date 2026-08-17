@@ -13,6 +13,10 @@
   validated.
 - Secrets are secure parameters or Container Apps secrets, never source files or
   deployment outputs.
+- Entra deployment keeps the `SecureString` out of Azure CLI arguments. A
+  uniquely named process environment variable is consumed by a temporary
+  non-secret `.bicepparam` compiled before Azure mutation, and both are cleared
+  in `finally`.
 - Reuse is explicit. Compatibility checks prevent accidental adoption of a
   different region or Cognitive Services kind; operators must also confirm the
   template's public-network and shared-key settings are acceptable.
@@ -20,11 +24,13 @@
 ## Threats and controls
 
 DNS rebinding and cross-site requests are limited by loopback Host/Origin
-validation. Stale render workers are limited by claim tokens and expiring
-leases. Upload replacement commits metadata before deleting the prior file, so
-cleanup failure cannot leave project metadata pointing to a deleted asset.
-Render identifiers are UUID-validated and output URLs do not expose filesystem
-paths.
+validation. The loopback aliases `localhost`, `127.0.0.1`, and `[::1]` are
+equivalent only when their protocol and effective port match; non-loopback
+names, protocol or port mismatches, and malformed headers are rejected.
+Stale render workers are limited by claim tokens and expiring leases. Upload
+replacement commits metadata before deleting the prior file, so cleanup failure
+cannot leave project metadata pointing to a deleted asset. Render identifiers
+are UUID-validated and output URLs do not expose filesystem paths.
 
 ## Remaining limitations
 
