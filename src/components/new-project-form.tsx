@@ -19,34 +19,12 @@ export function NewProjectForm() {
   const [projectId, setProjectId] = useState("");
   const [error, setError] = useState("");
 
-  async function submit(formData: FormData) {
+  async function generateProject(id: string) {
     setPending(true);
     setError("");
+    setGenerationStep(0);
     let interval: number | undefined;
     try {
-      let id = projectId;
-      if (!id) {
-        const response = await fetch("/api/projects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            idea: formData.get("idea"),
-            audience: formData.get("audience"),
-            tone: formData.get("tone"),
-            durationMinutes: duration,
-            githubUrl: formData.get("githubUrl"),
-          }),
-        });
-        const body = await response.json();
-        if (!response.ok) {
-          setError(body.error ?? "Could not create the project");
-          setPending(false);
-          return;
-        }
-        id = body.id;
-        setProjectId(id);
-      }
-
       interval = window.setInterval(
         () => setGenerationStep((current) => Math.min(current + 1, generationSteps.length - 1)),
         1800,
@@ -56,14 +34,45 @@ export function NewProjectForm() {
       if (!generation.ok) {
         setError(body.error ?? "Could not generate the presentation");
         setPending(false);
-        return;
+        return false;
       }
       router.push(`/projects/${id}`);
+      return true;
     } catch {
       setError("The connection was interrupted. Retry generation to continue.");
       setPending(false);
+      return false;
     } finally {
       if (interval !== undefined) window.clearInterval(interval);
+    }
+  }
+
+  async function submit(formData: FormData) {
+    setPending(true);
+    setError("");
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idea: formData.get("idea"),
+          audience: formData.get("audience"),
+          tone: formData.get("tone"),
+          durationMinutes: duration,
+          githubUrl: formData.get("githubUrl"),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setError(body.error ?? "Could not create the project");
+        setPending(false);
+        return;
+      }
+      setProjectId(body.id);
+      await generateProject(body.id);
+    } catch {
+      setError("The connection was interrupted. Check your connection and try again.");
+      setPending(false);
     }
   }
 
@@ -75,6 +84,15 @@ export function NewProjectForm() {
           <div className="progress-track"><span /></div>
           <strong>{generationSteps[generationStep]}</strong>
           <p>Keep this page open while we shape your deck.</p>
+        </div>
+      ) : projectId ? (
+        <div className="generation-state">
+          <p className="error" role="alert">{error}</p>
+          <strong>Your brief is saved.</strong>
+          <p>Retry generation without creating a duplicate project.</p>
+          <button className="primary" onClick={() => void generateProject(projectId)} type="button">
+            Retry generation <span aria-hidden="true">→</span>
+          </button>
         </div>
       ) : (
         <>
@@ -148,7 +166,7 @@ export function NewProjectForm() {
           </label>
           {error && <p className="error" role="alert">{error}</p>}
           <button className="primary" disabled={pending} type="submit">
-            {projectId ? "Retry generation" : "Shape my story"}
+            Shape my story
             <span aria-hidden="true">→</span>
           </button>
           <p className="privacy-note">Your idea stays in this deployment. Public repositories are read-only.</p>
