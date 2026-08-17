@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { activeRevision, updateSlideSchema } from "@/lib/domain";
+import { slideCopyFitIssues } from "@/lib/slide-fit";
 import { getProject, updateProject } from "@/lib/store";
 
 export async function PATCH(
@@ -27,6 +28,19 @@ export async function PATCH(
     return NextResponse.json(
       { error: "This presentation changed elsewhere. Refresh before editing." },
       { status: 409 },
+    );
+  }
+  const currentSlide = revision.slides.find((slide) => slide.id === slideId);
+  if (!currentSlide) {
+    return NextResponse.json({ error: "Slide not found" }, { status: 404 });
+  }
+  const fitIssues = slideCopyFitIssues({ ...currentSlide, ...parsed.data.changes });
+  if (fitIssues.length > 0) {
+    return NextResponse.json(
+      {
+        error: `Shorten the slide copy so it fits: ${fitIssues.join(", ")}.`,
+      },
+      { status: 400 },
     );
   }
   const nextRevision = {
