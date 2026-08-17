@@ -63,7 +63,7 @@ function VisualComposition({ visual }: { visual: Visual }) {
 
 function SlidePreview({ slide }: { slide: Slide }) {
   return (
-    <div className={`slide-canvas layout-${slide.layout} visual-${slide.visual.type}`}>
+    <div className={`slide-canvas layout-${slide.layout} has-visual-${slide.visual.type}`}>
       <div className="slide-topline"><span>IDEA2IMPACT</span><span>{slide.layout}</span></div>
       <div className="slide-content">
         <p className="slide-kicker">{slide.purpose}</p>

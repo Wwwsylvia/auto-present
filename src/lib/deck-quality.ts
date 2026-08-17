@@ -4,6 +4,7 @@ import {
   type Slide,
   type Visual,
 } from "@/lib/domain";
+import { slideCopyFitIssues } from "@/lib/slide-fit";
 
 export type DeckQualityCheckName =
   | "narrative"
@@ -40,7 +41,7 @@ type DeckQualityDeck = {
   >[];
 };
 
-function visualText(visual: Visual): string[] {
+export function visualText(visual: Visual): string[] {
   switch (visual.type) {
     case "statement":
       return [visual.statement];
@@ -112,7 +113,7 @@ export function evaluateDeckQuality(
       ...slide.bullets,
       ...visualText(slide.visual),
     ].join(" ");
-    return wordCount(text) > 70;
+    return wordCount(text) > 55 || slideCopyFitIssues(slide).length > 0;
   });
 
   const claims = slides.flatMap((slide) => [slide.title, slide.audienceTakeaway, ...slide.bullets]);

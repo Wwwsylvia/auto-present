@@ -234,7 +234,9 @@ test("retries an invalid strategy response once, then continues with valid passe
     "draft:1",
     "critic:1",
   ]);
-  assert.match(queue.calls[1].user, /previous response failed validation/i);
+  assert.match(queue.calls[1].user, /previous responses failed validation/i);
+  assert.match(queue.calls.find((call) => call.pass === "strategy")?.system ?? "", /repository evidence supports that thesis/i);
+  assert.match(queue.calls.find((call) => call.pass === "critic")?.system ?? "", /Apply the point test/i);
 });
 
 test("normalizes harmless strategy verbosity and descriptive narrative stages", async () => {
@@ -274,6 +276,28 @@ test("normalizes harmless strategy verbosity and descriptive narrative stages", 
   assert.ok(normalized.demoPlan.rationale.length <= 360);
 });
 
+test("repairs harmless required-layout label drift before the critic pass", async () => {
+  const mislabeledDraft = draft();
+  mislabeledDraft.slides = mislabeledDraft.slides.map((slide) => ({
+    ...slide,
+    layout: slide.layout === "demo" ? "demo" : "process",
+  }));
+  const queue = queuedCompletion([
+    JSON.stringify(strategy()),
+    JSON.stringify(mislabeledDraft),
+    JSON.stringify(criticResponse()),
+  ]);
+
+  await generatePresentation(projectWithEvidence(), queue.completion);
+  const criticRequest = JSON.parse(queue.calls[2].user) as { draft: { slides: SlideDraft[] } };
+
+  assert.equal(queue.calls.length, 3);
+  assert.equal(criticRequest.draft.slides[0].layout, "hero");
+  assert.equal(criticRequest.draft.slides[1].layout, "problem");
+  assert.equal(criticRequest.draft.slides[2].layout, "solution");
+  assert.equal(criticRequest.draft.slides.at(-1)?.layout, "closing");
+});
+
 test("deterministically compacts an otherwise valid overfilled critic slide", async () => {
   const critic = criticResponse();
   const demo = critic.finalDeck.slides.find((slide) => slide.layout === "demo");
@@ -309,13 +333,17 @@ test("rejects unsupported evidence during generation after bounded retries", asy
     ...strategy(),
     proofPoints: [{ claim: "Unsupported claim", evidencePaths: ["secrets.md"] }],
   };
-  const queue = queuedCompletion([JSON.stringify(unsupported), JSON.stringify(unsupported)]);
+  const queue = queuedCompletion([
+    JSON.stringify(unsupported),
+    JSON.stringify(unsupported),
+    JSON.stringify(unsupported),
+  ]);
 
   await assert.rejects(
     generatePresentation(projectWithEvidence(), queue.completion),
-    /strategy pass failed after 2 attempts.*unknown evidence path/i,
+    /strategy pass failed after 3 attempts.*unknown evidence path/i,
   );
-  assert.equal(queue.calls.length, 2);
+  assert.equal(queue.calls.length, 3);
 });
 
 test("normalizes runtime exactly while favoring slides with more narration", () => {
