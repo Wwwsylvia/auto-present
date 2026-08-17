@@ -75,13 +75,11 @@ function serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export async function listProjects(): Promise<Project[]> {
-  const projects = await Promise.all((await readProjects()).map(hydrateRenderJobs));
-  return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return (await readProjects()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
-  const project = (await readProjects()).find((item) => item.id === id);
-  return project ? hydrateRenderJobs(project) : undefined;
+  return (await readProjects()).find((project) => project.id === id);
 }
 
 export async function createProject(input: ProjectInput): Promise<Project> {

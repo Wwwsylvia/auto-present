@@ -4,7 +4,6 @@ import { DefaultAzureCredential } from "@azure/identity";
 import { z } from "zod";
 import { containsMouseActionNarration, evaluateDeckQuality } from "@/lib/deck-quality";
 import {
-  actualDurationSeconds,
   presentationRevisionSchema,
   presentationStrategySchema,
   revisionPatchSchema,
@@ -16,7 +15,6 @@ import {
   type RevisionPatch,
   type Slide,
 } from "@/lib/domain";
-import { PublicError } from "@/lib/http";
 
 const promptVersion = "deck-intelligence-v2";
 const maxAttemptsPerPass = 2;

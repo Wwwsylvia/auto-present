@@ -1,6 +1,5 @@
 import { promises as fs } from "node:fs";
 import { NextResponse } from "next/server";
-import { rejectNonLocalRequest } from "@/lib/http";
 import { renderOutputPath } from "@/lib/render";
 import { rejectUnsafeRequest } from "@/lib/http";
 import { isRenderDownloadAvailable } from "@/lib/render-jobs";

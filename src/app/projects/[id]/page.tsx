@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { ProjectWorkspace } from "@/components/project-workspace";
-import { foundryConfigured } from "@/lib/config";
 import { getProject } from "@/lib/store";
 
 export const dynamic = "force-dynamic";

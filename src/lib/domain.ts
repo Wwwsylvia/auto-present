@@ -157,10 +157,9 @@ export type PresentationRevision = z.infer<typeof presentationRevisionSchema>;
 
 export const renderJobSchema = z.object({
   id: z.string(),
-  projectId: z.string().default(""),
   revisionId: z.string(),
   kind: z.enum(["preview", "final"]),
-  status: z.enum(["queued", "rendering", "retrying", "complete", "failed", "stale"]),
+  status: z.enum(["queued", "rendering", "complete", "failed", "stale"]),
   progress: z.number().min(0).max(100),
   dispatchAttempts: z.number().int().nonnegative().default(0),
   outputUrl: z.string().optional(),

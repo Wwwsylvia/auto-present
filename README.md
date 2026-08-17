@@ -5,8 +5,6 @@ and a downloadable MP4. It is an MVP for hackathon teams that need to spend
 their final hours building rather than assembling slides and video. The safest
 current operating mode is a single-user localhost app.
 
-> **Localhost-only:** Idea2Impact is designed to run on one developer machine. The web server binds to `127.0.0.1`; every data-bearing API request also requires a loopback `Host`, and browser requests must remain same-origin. Project data and media remain on the local filesystem, and the separate render worker runs locally. Do not deploy this MVP, expose it through public ingress, use a hostname that resolves to loopback, or publish its data directory. Microsoft Foundry, Azure AI Speech, and GitHub are outbound server-side dependencies only.
-
 ## What works
 
 - Guided brief with a required idea, audience, tone, and 1–10 minute target
@@ -83,7 +81,6 @@ The supported settings include:
 | `AZURE_SPEECH_KEY` | Optional local Speech key; managed identity is preferred |
 | `AZURE_SPEECH_USE_MANAGED_IDENTITY` | Enables managed-identity Speech authentication |
 | `AZURE_SPEECH_VOICE` | Optional voice; defaults to `en-US-AvaMultilingualNeural` |
-| `AZURE_SPEECH_USE_AZURE_CREDENTIAL` | Use passwordless Azure CLI identity; defaults to `true` |
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
 | `RENDER_EXECUTION_MODE` | Selects local or Container Apps Job rendering |
