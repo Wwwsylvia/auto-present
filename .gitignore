@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/infra/main.json/
 /out/
 
 # production
