@@ -18,5 +18,8 @@ test("local launcher rejects non-loopback listeners before reuse", async () => {
   assert.match(script, /service mode/);
   assert.match(script, /server mode/);
   assert.match(script, /process \$processIds was not stopped/);
+  assert.match(script, /Properties\['speechEndpoint'\]/);
+  assert.match(script, /Properties\['speechAccountName'\]/);
+  assert.match(script, /az group show/);
   assert.doesNotMatch(script, /Stop-Process/);
 });

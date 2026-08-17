@@ -124,6 +124,9 @@ function validateEvidence(
   knownPaths: Set<string>,
 ): void {
   for (const [index, proofPoint] of strategy.proofPoints.entries()) {
+    if (knownPaths.size > 0 && proofPoint.evidencePaths.length === 0) {
+      throw new Error(`Strategy proof point ${index + 1} must cite supplied evidence`);
+    }
     assertKnownEvidence(proofPoint.evidencePaths, knownPaths, `Strategy proof point ${index + 1}`);
   }
   for (const [index, slide] of slides.entries()) {
@@ -344,24 +347,14 @@ Narration must complement the visual rather than read it and must not describe m
 Return only JSON matching the requested shape.`;
 
 const visualResponseShape = {
-  statement: { type: "statement", statement: "string" },
-  cards: { type: "cards", cards: [{ heading: "string", body: "optional string" }] },
-  flow: { type: "flow", steps: [{ label: "string", detail: "optional string" }] },
-  comparison: {
-    type: "comparison",
-    leftLabel: "string",
-    rightLabel: "string",
-    rows: [{ label: "string", left: "string", right: "string" }],
-  },
-  metrics: {
-    type: "metrics",
-    metrics: [{ value: "string", label: "string", detail: "optional string" }],
-  },
-  timeline: {
-    type: "timeline",
-    events: [{ label: "string", detail: "optional string" }],
-  },
-  demo: { type: "demo", setup: "string", action: "string", payoff: "string" },
+  type: "exact enum: statement|cards|flow|comparison|metrics|timeline|demo",
+  statement: "required string only when type=statement",
+  cards: "required [{ heading, optional body }] only when type=cards",
+  steps: "required [{ label, optional detail }] only when type=flow",
+  comparison: "when type=comparison, include leftLabel, rightLabel, and rows [{ label, left, right }]",
+  metrics: "required [{ value, label, optional detail }] only when type=metrics",
+  events: "required [{ label, optional detail }] only when type=timeline",
+  demo: "when type=demo, include setup, action, and payoff strings",
 } as const;
 
 const slideResponseShape = {
@@ -376,6 +369,116 @@ const slideResponseShape = {
   evidencePaths: ["known path"],
 } as const;
 
+const narrativeStages = ["hook", "problem", "solution", "proof", "demo", "close"] as const;
+const slideLayouts = [
+  "hero",
+  "problem",
+  "solution",
+  "comparison",
+  "process",
+  "architecture",
+  "evidence",
+  "demo",
+  "closing",
+] as const;
+const visualTypes = [
+  "statement",
+  "cards",
+  "flow",
+  "comparison",
+  "metrics",
+  "timeline",
+  "demo",
+] as const;
+
+function normalizeEnumLabel<T extends string>(
+  value: unknown,
+  supported: readonly T[],
+): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  return supported.find((candidate) =>
+    new RegExp(`\\b${candidate}\\b`).test(normalized),
+  ) ?? value;
+}
+
+function normalizeStrategyResponse(value: unknown, knownPaths: Set<string>): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const strategy = value as Record<string, unknown>;
+  const narrativeArc = Array.isArray(strategy.narrativeArc)
+    ? strategy.narrativeArc.map((stage) => {
+        return normalizeEnumLabel(stage, narrativeStages);
+      })
+    : strategy.narrativeArc;
+
+  return {
+    ...strategy,
+    // A brief without repository context cannot support evidence-backed proof points.
+    proofPoints: knownPaths.size === 0 ? [] : strategy.proofPoints,
+    narrativeArc,
+  };
+}
+
+function normalizeVisualResponse(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const visual = value as Record<string, unknown>;
+  for (const candidate of visualTypes) {
+    const nested = visual[candidate];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      return { ...(nested as Record<string, unknown>), type: candidate };
+    }
+  }
+  const inferredType =
+    typeof visual.statement === "string"
+      ? "statement"
+      : Array.isArray(visual.cards)
+        ? "cards"
+        : Array.isArray(visual.steps)
+          ? "flow"
+          : Array.isArray(visual.rows)
+            ? "comparison"
+            : Array.isArray(visual.metrics)
+              ? "metrics"
+              : Array.isArray(visual.events)
+                ? "timeline"
+                : typeof visual.setup === "string" &&
+                    typeof visual.action === "string" &&
+                    typeof visual.payoff === "string"
+                  ? "demo"
+                  : undefined;
+  return {
+    ...visual,
+    type: inferredType ?? normalizeEnumLabel(visual.type, visualTypes),
+  };
+}
+
+function normalizeDeckResponse(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const deck = value as Record<string, unknown>;
+  if (!Array.isArray(deck.slides)) return value;
+  return {
+    ...deck,
+    slides: deck.slides.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      const slide = value as Record<string, unknown>;
+      return {
+        ...slide,
+        layout: normalizeEnumLabel(slide.layout, slideLayouts),
+        visual: normalizeVisualResponse(slide.visual),
+      };
+    }),
+  };
+}
+
+function normalizeCriticResponse(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const critic = value as Record<string, unknown>;
+  return {
+    ...critic,
+    finalDeck: normalizeDeckResponse(critic.finalDeck),
+  };
+}
+
 function validateDraft(
   draft: DeckDraft,
   strategy: PresentationStrategy,
@@ -386,6 +489,75 @@ function validateDraft(
   return draft;
 }
 
+function compactVisual(visual: Slide["visual"]): Slide["visual"] {
+  switch (visual.type) {
+    case "statement":
+      return { ...visual, statement: compactWords(visual.statement, 18, 220) };
+    case "cards":
+      return {
+        ...visual,
+        cards: visual.cards.slice(0, 3).map((card) => ({
+          heading: compactWords(card.heading, 3, 80),
+          ...(card.body ? { body: compactWords(card.body, 5, 160) } : {}),
+        })),
+      };
+    case "flow":
+      return {
+        ...visual,
+        steps: visual.steps.slice(0, 4).map((step) => ({
+          label: compactWords(step.label, 2, 80),
+          ...(step.detail ? { detail: compactWords(step.detail, 4, 160) } : {}),
+        })),
+      };
+    case "comparison":
+      return {
+        ...visual,
+        leftLabel: compactWords(visual.leftLabel, 3, 80),
+        rightLabel: compactWords(visual.rightLabel, 3, 80),
+        rows: visual.rows.slice(0, 3).map((row) => ({
+          label: compactWords(row.label, 2, 80),
+          left: compactWords(row.left, 3, 120),
+          right: compactWords(row.right, 3, 120),
+        })),
+      };
+    case "metrics":
+      return {
+        ...visual,
+        metrics: visual.metrics.slice(0, 3).map((metric) => ({
+          value: compactWords(metric.value, 2, 40),
+          label: compactWords(metric.label, 3, 80),
+          ...(metric.detail ? { detail: compactWords(metric.detail, 3, 120) } : {}),
+        })),
+      };
+    case "timeline":
+      return {
+        ...visual,
+        events: visual.events.slice(0, 4).map((event) => ({
+          label: compactWords(event.label, 2, 80),
+          ...(event.detail ? { detail: compactWords(event.detail, 4, 160) } : {}),
+        })),
+      };
+    case "demo":
+      return {
+        ...visual,
+        setup: compactWords(visual.setup, 7, 180),
+        action: compactWords(visual.action, 7, 180),
+        payoff: compactWords(visual.payoff, 7, 180),
+      };
+  }
+}
+
+function compactSlide(slide: SlideDraft): SlideDraft {
+  return {
+    ...slide,
+    title: compactWords(slide.title, 10, 120),
+    purpose: compactWords(slide.purpose, 5, 240),
+    audienceTakeaway: compactWords(slide.audienceTakeaway, 10, 280),
+    bullets: slide.bullets.slice(0, 3).map((bullet) => compactWords(bullet, 4, 220)),
+    visual: compactVisual(slide.visual),
+  };
+}
+
 function normalizeAndValidateFinal(
   finalDeck: FinalDeck,
   targetSeconds: number,
@@ -393,7 +565,7 @@ function normalizeAndValidateFinal(
 ): FinalDeck {
   const normalized: FinalDeck = {
     ...finalDeck,
-    slides: normalizeSlideDurations(finalDeck.slides, targetSeconds),
+    slides: normalizeSlideDurations(finalDeck.slides.map(compactSlide), targetSeconds),
   };
   validateEvidence(normalized.strategy, normalized.slides, knownPaths);
   assertDeckStructure(normalized.strategy, normalized.slides);
@@ -649,15 +821,18 @@ export async function generatePresentation(
           problem: "string",
           solution: "string",
           differentiators: ["string"],
-          proofPoints: [{ claim: "string", evidencePaths: ["known path"] }],
-          narrativeArc: ["hook", "problem", "solution", "proof", "demo", "close"],
+          proofPoints:
+            knownPaths.size === 0
+              ? []
+              : [{ claim: "string", evidencePaths: ["one or more exact known paths"] }],
+          narrativeArc: ["exact enum: hook|problem|solution|proof|demo|close"],
           voiceoverDirection: "string",
           demoPlan: { recommendation: "include|omit", rationale: "string" },
         },
       }),
     },
     (value) => {
-      const parsed = presentationStrategySchema.parse(value);
+      const parsed = presentationStrategySchema.parse(normalizeStrategyResponse(value, knownPaths));
       validateEvidence(parsed, [], knownPaths);
       return parsed;
     },
@@ -680,7 +855,7 @@ export async function generatePresentation(
         },
       }),
     },
-    (value) => validateDraft(deckDraftSchema.parse(value), strategy, knownPaths),
+    (value) => validateDraft(deckDraftSchema.parse(normalizeDeckResponse(value)), strategy, knownPaths),
   );
 
   const critic = await completeJson(
@@ -713,7 +888,7 @@ export async function generatePresentation(
       }),
     },
     (value) => {
-      const parsed = criticResultSchema.parse(value);
+      const parsed = criticResultSchema.parse(normalizeCriticResponse(value));
       return {
         ...parsed,
         finalDeck: normalizeAndValidateFinal(parsed.finalDeck, targetDurationSeconds(project), knownPaths),

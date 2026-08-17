@@ -174,8 +174,33 @@ if ($AzureBacked) {
         $outputs = $outputsJson | ConvertFrom-Json
         $FoundryProjectEndpoint = $outputs.foundryProjectEndpoint.value
         $FoundryModelDeployment = $outputs.modelDeploymentName.value
-        $SpeechEndpoint = $outputs.speechEndpoint.value
-        $SpeechRegion = $outputs.speechRegion.value
+        $speechEndpointOutput = $outputs.PSObject.Properties['speechEndpoint']
+        if ($null -ne $speechEndpointOutput) {
+            $SpeechEndpoint = $speechEndpointOutput.Value.value
+        }
+        else {
+            $speechAccountOutput = $outputs.PSObject.Properties['speechAccountName']
+            if ($null -eq $speechAccountOutput -or
+                [string]::IsNullOrWhiteSpace($speechAccountOutput.Value.value)) {
+                throw "Deployment '$DeploymentName' has neither speechEndpoint nor speechAccountName output."
+            }
+            $SpeechEndpoint = "https://$($speechAccountOutput.Value.value).cognitiveservices.azure.com/"
+        }
+        $speechRegionOutput = $outputs.PSObject.Properties['speechRegion']
+        if ($null -ne $speechRegionOutput) {
+            $SpeechRegion = $speechRegionOutput.Value.value
+        }
+        else {
+            $SpeechRegion = (& az group show `
+                --name $ResourceGroupName `
+                --subscription $SubscriptionId `
+                --query location `
+                --output tsv `
+                --only-show-errors)
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($SpeechRegion)) {
+                throw "Could not resolve the Speech region from resource group '$ResourceGroupName'."
+            }
+        }
     }
 
     $env:FOUNDRY_PROJECT_ENDPOINT = $FoundryProjectEndpoint

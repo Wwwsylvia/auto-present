@@ -272,6 +272,99 @@ test("rejects unsupported evidence during generation after bounded retries", asy
   assert.equal(queue.calls.length, 2);
 });
 
+test("normalizes live strategy labels and omits proof points when no repository evidence exists", async () => {
+  const project = projectWithEvidence();
+  project.repository = null;
+  project.input.githubUrl = "";
+
+  const evidenceFreeStrategy = {
+    ...strategy(),
+    proofPoints: [],
+  };
+  const evidenceFreeDraft = {
+    ...draft(),
+    slides: slides().map((slide) => ({
+      ...slide,
+      layout: `${slide.layout} layout`,
+      visual: { type: slide.layout, [slide.visual.type]: slide.visual },
+      evidencePaths: [],
+    })),
+  };
+  const normalizedEvidenceFreeDraft = {
+    ...draft(),
+    slides: slides().map((slide) => ({ ...slide, evidencePaths: [] })),
+  };
+  const queue = queuedCompletion([
+    JSON.stringify({
+      ...strategy(),
+      proofPoints: [
+        { claim: "The proposed workflow creates a focused outcome.", evidencePaths: [] },
+      ],
+      narrativeArc: [
+        "Hook - establish the decision",
+        "Problem: frame the cost",
+        "Solution - explain the workflow",
+        "Proof: identify validation",
+        "Demo - reveal the outcome",
+        "Close: request the next step",
+      ],
+    }),
+    JSON.stringify(evidenceFreeDraft),
+    JSON.stringify({
+      ...criticResponse(),
+      finalDeck: { ...evidenceFreeDraft, strategy: evidenceFreeStrategy },
+    }),
+  ]);
+
+  const revision = await generatePresentation(project, queue.completion);
+
+  assert.deepEqual(revision.strategy.proofPoints, []);
+  assert.deepEqual(revision.strategy.narrativeArc, [
+    "hook",
+    "problem",
+    "solution",
+    "proof",
+    "demo",
+    "close",
+  ]);
+  assert.deepEqual(
+    revision.slides.map((slide) => [slide.layout, slide.visual.type]),
+    normalizedEvidenceFreeDraft.slides.map((slide) => [slide.layout, slide.visual.type]),
+  );
+});
+
+test("compacts dense Foundry display copy before enforcing deck quality", async () => {
+  const denseFinalDeck = {
+    ...finalDeck(),
+    slides: slides().map((slide, index) => ({
+      ...slide,
+      title: `${slide.title} with extensive detail for decision makers`,
+      purpose: `${slide.purpose} with additional strategic context`,
+      audienceTakeaway: `${slide.audienceTakeaway} This additional explanation makes the intended decision especially explicit.`,
+      bullets: Array.from(
+        { length: 5 },
+        (_, bulletIndex) => `Detailed point ${index + 1}.${bulletIndex + 1} explains implementation value and decision context`,
+      ),
+    })),
+  };
+  const queue = queuedCompletion([
+    JSON.stringify(strategy()),
+    JSON.stringify(draft()),
+    JSON.stringify({
+      ...criticResponse(),
+      finalDeck: denseFinalDeck,
+    }),
+  ]);
+
+  const revision = await generatePresentation(projectWithEvidence(), queue.completion);
+  const quality = evaluateDeckQuality(revision, {
+    targetDurationSeconds: 120,
+    knownEvidencePaths: ["README.md"],
+  });
+
+  assert.equal(quality.checks.find((check) => check.name === "text-density")?.passed, true);
+});
+
 test("normalizes runtime exactly while favoring slides with more narration", () => {
   const normalized = normalizeSlideDurations(
     [
