@@ -21,9 +21,11 @@ export async function POST(
     const revision = await generatePresentation({ ...project, repository });
     const updated = await updateProject(id, (current) => ({
       ...current,
+      stage: "create",
       repository,
       revisions: [...current.revisions, revision],
       activeRevisionId: revision.id,
+      approvedPlanRevisionId: revision.id,
       lastError: null,
     }));
     return NextResponse.json(updated);

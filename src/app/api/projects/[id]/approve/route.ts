@@ -12,18 +12,12 @@ export async function POST(
   if (!project || !revision) {
     return NextResponse.json({ error: "Generate a presentation first" }, { status: 400 });
   }
-  const updated = await updateProject(id, (current) =>
-    current.stage === "plan"
-      ? {
-          ...current,
-          stage: "create",
-          approvedPlanRevisionId: revision.id,
-        }
-      : {
-          ...current,
-          stage: "produce",
-          approvedDeckRevisionId: revision.id,
-        },
-  );
+  const updated = await updateProject(id, (current) => ({
+    ...current,
+    stage: "produce",
+    approvedPlanRevisionId: current.approvedPlanRevisionId ?? revision.id,
+    approvedDeckRevisionId: revision.id,
+    lastError: null,
+  }));
   return NextResponse.json(updated);
 }

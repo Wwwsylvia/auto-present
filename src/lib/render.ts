@@ -148,12 +148,13 @@ function srtTimestamp(seconds: number): string {
 export async function renderPresentation(
   project: Project,
   kind: RenderJob["kind"],
+  renderId = randomUUID(),
 ): Promise<{ job: RenderJob; outputPath: string }> {
   const revision = activeRevision(project);
   if (!revision || project.approvedDeckRevisionId !== revision.id) {
     throw new Error("Approve the current deck before rendering");
   }
-  const id = randomUUID();
+  const id = renderId;
   const jobDirectory = path.join(outputRoot, id);
   await fs.mkdir(jobDirectory, { recursive: true });
   const hasSpeech = Boolean(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
@@ -164,6 +165,8 @@ export async function renderPresentation(
   const segmentFiles: string[] = [];
   let elapsed = 0;
   const captions: string[] = [];
+  const closingIndex = revision.slides.findIndex((slide) => slide.layout === "closing");
+  const demoIndex = closingIndex > 0 ? closingIndex - 1 : Math.max(0, revision.slides.length - 2);
   for (const [index, slide] of revision.slides.entries()) {
     const image = `slide-${index}.png`;
     const segment = `segment-${index}.mp4`;
@@ -171,7 +174,7 @@ export async function renderPresentation(
     const duration = slide.durationSeconds;
     let renderedDuration = duration;
     const demoAsset =
-      slide.layout === "demo"
+      index === demoIndex
         ? project.assets.find((asset) => asset.kind === "demo-video")
         : undefined;
     const visualInput = demoAsset
