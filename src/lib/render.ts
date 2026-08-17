@@ -165,9 +165,9 @@ export async function renderPresentation(
   const segmentFiles: string[] = [];
   let elapsed = 0;
   const captions: string[] = [];
-  const closingIndex = revision.slides.findIndex((slide) => slide.layout === "closing");
+  const closingIndex = revision.slides.length - 1;
   const demoAsset = project.assets.find((asset) => asset.kind === "demo-video");
-  if (demoAsset && closingIndex <= 0) {
+  if (demoAsset && revision.slides[closingIndex]?.layout !== "closing") {
     throw new Error("The demo clip needs a closing slide in the approved deck");
   }
   const demoIndex = closingIndex - 1;
