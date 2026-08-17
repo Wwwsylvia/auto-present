@@ -3,7 +3,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { uploadDirectory } from "@/lib/data-paths";
-import { updateProject } from "@/lib/store";
+import { activeRevision } from "@/lib/domain";
+import { getProject, updateProject } from "@/lib/store";
 import { rejectUnsafeRequest } from "@/lib/http";
 import { removeFilesBestEffort } from "@/lib/local-files";
 
@@ -17,6 +18,19 @@ export async function POST(
   const rejection = rejectUnsafeRequest(request);
   if (rejection) return rejection;
   const { id } = await params;
+  const currentProject = await getProject(id);
+  const currentRevision = currentProject && activeRevision(currentProject);
+  const hasApprovedDemoSlide = Boolean(
+    currentRevision &&
+      currentProject?.approvedDeckRevisionId === currentRevision.id &&
+      currentRevision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo"),
+  );
+  if (!hasApprovedDemoSlide) {
+    return NextResponse.json(
+      { error: "Approve a deck with a semantic demo slide before uploading a demo clip" },
+      { status: 400 },
+    );
+  }
   const form = await request.formData();
   const upload = form.get("file");
   if (!(upload instanceof File)) {
@@ -40,6 +54,13 @@ export async function POST(
       replacedPaths = current.assets
         .filter((asset) => asset.kind === "demo-video")
         .map((asset) => asset.localPath);
+      const revision = activeRevision(current);
+      const stillHasApprovedDemoSlide = Boolean(
+        revision &&
+          current.approvedDeckRevisionId === revision.id &&
+          revision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo"),
+      );
+      if (!stillHasApprovedDemoSlide) throw new Error("DEMO_SLIDE_REQUIRED");
       return {
         ...current,
         assets: [
@@ -59,6 +80,12 @@ export async function POST(
     return NextResponse.json(project);
   } catch (error) {
     await fs.rm(localPath, { force: true });
+    if (error instanceof Error && error.message === "DEMO_SLIDE_REQUIRED") {
+      return NextResponse.json(
+        { error: "The approved deck changed and no longer contains a semantic demo slide" },
+        { status: 409 },
+      );
+    }
     const message = error instanceof Error ? error.message : "Upload failed";
     return NextResponse.json({ error: message }, { status: 404 });
   }

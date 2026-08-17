@@ -7,7 +7,12 @@ export const projectInputSchema = z.object({
   idea: z.string().trim().min(20, "Describe your idea in at least 20 characters").max(8000),
   audience: z.string().trim().min(2).max(200).default("Hackathon judges"),
   tone: z.enum(["confident", "conversational", "technical", "inspiring"]).default("confident"),
-  durationMinutes: z.coerce.number().min(1).max(10),
+  durationMinutes: z
+    .coerce
+    .number()
+    .min(1)
+    .max(10)
+    .refine((minutes) => Number.isInteger(minutes * 60), "Choose a duration that resolves to whole seconds"),
   githubUrl: z.union([z.literal(""), z.url()]).default(""),
 });
 export type ProjectInput = z.infer<typeof projectInputSchema>;
@@ -16,6 +21,9 @@ export const evidenceSchema = z.object({
   path: z.string(),
   excerpt: z.string(),
   url: z.string(),
+  category: z
+    .enum(["readme", "documentation", "manifest", "entry-point", "route", "schema", "test", "deployment"])
+    .default("documentation"),
 });
 
 export const repositorySnapshotSchema = z.object({
@@ -29,24 +37,107 @@ export const repositorySnapshotSchema = z.object({
 });
 export type RepositorySnapshot = z.infer<typeof repositorySnapshotSchema>;
 
+const shortText = (maximum: number) => z.string().trim().min(1).max(maximum);
+
 export const slideLayoutSchema = z.enum([
   "hero",
   "problem",
-  "features",
+  "solution",
+  "comparison",
+  "process",
   "architecture",
+  "evidence",
   "demo",
   "closing",
 ]);
+export type SlideLayout = z.infer<typeof slideLayoutSchema>;
+
+const visualCardSchema = z.object({
+  heading: shortText(80),
+  body: shortText(180).optional(),
+});
+
+export const visualSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("statement"),
+    statement: shortText(220),
+  }),
+  z.object({
+    type: z.literal("cards"),
+    cards: z.array(visualCardSchema).min(2).max(4),
+  }),
+  z.object({
+    type: z.literal("flow"),
+    steps: z.array(z.object({ label: shortText(80), detail: shortText(160).optional() })).min(2).max(6),
+  }),
+  z.object({
+    type: z.literal("comparison"),
+    leftLabel: shortText(80),
+    rightLabel: shortText(80),
+    rows: z
+      .array(z.object({ label: shortText(80), left: shortText(140), right: shortText(140) }))
+      .min(2)
+      .max(5),
+  }),
+  z.object({
+    type: z.literal("metrics"),
+    metrics: z
+      .array(z.object({ value: shortText(40), label: shortText(100), detail: shortText(140).optional() }))
+      .min(1)
+      .max(4),
+  }),
+  z.object({
+    type: z.literal("timeline"),
+    events: z.array(z.object({ label: shortText(80), detail: shortText(160).optional() })).min(2).max(6),
+  }),
+  z.object({
+    type: z.literal("demo"),
+    setup: shortText(180),
+    action: shortText(180),
+    payoff: shortText(180),
+  }),
+]);
+export type Visual = z.infer<typeof visualSchema>;
+
+export const narrativeStageSchema = z.enum(["hook", "problem", "solution", "proof", "demo", "close"]);
+export type NarrativeStage = z.infer<typeof narrativeStageSchema>;
+
+export const demoPlanSchema = z.object({
+  recommendation: z.enum(["include", "omit"]),
+  rationale: shortText(360),
+});
+export type DemoPlan = z.infer<typeof demoPlanSchema>;
+
+export const proofPointSchema = z.object({
+  claim: shortText(280),
+  evidencePaths: z.array(z.string().min(1)).min(1).max(4),
+});
+export type ProofPoint = z.infer<typeof proofPointSchema>;
+
+export const presentationStrategySchema = z.object({
+  audienceGoal: shortText(360),
+  coreMessage: shortText(360),
+  problem: shortText(600),
+  solution: shortText(600),
+  differentiators: z.array(shortText(240)).min(1).max(5),
+  proofPoints: z.array(proofPointSchema).max(6),
+  narrativeArc: z.array(narrativeStageSchema).min(3).max(6),
+  voiceoverDirection: shortText(600),
+  demoPlan: demoPlanSchema,
+});
+export type PresentationStrategy = z.infer<typeof presentationStrategySchema>;
 
 export const slideSchema = z.object({
   id: z.string(),
-  title: z.string().min(1).max(120),
-  purpose: z.string().min(1).max(240),
+  title: shortText(120),
+  purpose: shortText(240),
+  audienceTakeaway: shortText(280),
   layout: slideLayoutSchema,
-  bullets: z.array(z.string().min(1).max(220)).max(5),
-  narration: z.string().min(1).max(2400),
-  durationSeconds: z.number().min(3).max(180),
-  evidencePaths: z.array(z.string()).default([]),
+  bullets: z.array(shortText(220)).max(5),
+  visual: visualSchema,
+  narration: shortText(2400),
+  durationSeconds: z.number().int().min(3).max(180),
+  evidencePaths: z.array(z.string().min(1)).max(6),
 });
 export type Slide = z.infer<typeof slideSchema>;
 
@@ -54,9 +145,10 @@ export const presentationRevisionSchema = z.object({
   id: z.string(),
   version: z.number().int().positive(),
   createdAt: z.string(),
-  title: z.string().min(1).max(120),
-  tagline: z.string().min(1).max(220),
-  summary: z.string().min(1).max(1200),
+  title: shortText(120),
+  tagline: shortText(220),
+  summary: shortText(1200),
+  strategy: presentationStrategySchema,
   slides: z.array(slideSchema).min(3).max(20),
   promptVersion: z.string(),
   source: z.enum(["foundry", "demo"]),
@@ -107,37 +199,51 @@ export type Project = z.infer<typeof projectSchema>;
 
 export const createProjectSchema = projectInputSchema;
 
+const slideChangeFieldsSchema = slideSchema
+  .pick({
+    title: true,
+    purpose: true,
+    audienceTakeaway: true,
+    layout: true,
+    bullets: true,
+    visual: true,
+    narration: true,
+    durationSeconds: true,
+    evidencePaths: true,
+  })
+  .partial();
+
+export const slideChangesSchema = z
+  .preprocess((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const changes = value as Record<string, unknown>;
+    if (!("demoPlan" in changes)) return changes;
+    if ("visual" in changes) return { ...changes, visual: { type: "invalid-demo-plan" } };
+    const { demoPlan, ...otherChanges } = changes;
+    return {
+      ...otherChanges,
+      visual: { type: "demo", ...(demoPlan as Record<string, unknown>) },
+    };
+  }, slideChangeFieldsSchema)
+  .refine((changes) => Object.keys(changes).length > 0, "A slide change cannot be empty");
+
 export const updateSlideSchema = z.object({
   expectedVersion: z.number().int().positive(),
   slideId: z.string(),
-  changes: slideSchema
-    .pick({
-      title: true,
-      purpose: true,
-      bullets: true,
-      narration: true,
-      durationSeconds: true,
-    })
-    .partial(),
+  changes: slideChangesSchema,
 });
 
 export const revisionPatchSchema = z.object({
-  summary: z.string().min(1).max(300),
-  slideChanges: z.array(
-    z.object({
-      slideId: z.string(),
-      changes: slideSchema
-        .pick({
-          title: true,
-          purpose: true,
-          bullets: true,
-          narration: true,
-          durationSeconds: true,
-        })
-        .partial()
-        .refine((changes) => Object.keys(changes).length > 0, "A slide change cannot be empty"),
-    }),
-  ).min(1).max(20),
+  summary: shortText(300),
+  slideChanges: z
+    .array(
+      z.object({
+        slideId: z.string(),
+        changes: slideChangesSchema,
+      }),
+    )
+    .min(1)
+    .max(20),
 });
 export type RevisionPatch = z.infer<typeof revisionPatchSchema>;
 
@@ -149,7 +255,7 @@ export function targetDurationSeconds(project: Pick<Project, "input">): number {
   return project.input.durationMinutes * 60;
 }
 
-export function actualDurationSeconds(revision: PresentationRevision): number {
+export function actualDurationSeconds(revision: { slides: readonly Pick<Slide, "durationSeconds">[] }): number {
   return revision.slides.reduce((total, slide) => total + slide.durationSeconds, 0);
 }
 

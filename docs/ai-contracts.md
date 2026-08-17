@@ -2,11 +2,19 @@
 
 ## Generation
 
-The presentation copilot receives the brief, duration budget, optional normalized repository snapshot, and an explicit response shape. The response must validate as a `PresentationRevision`: 3–20 slides with typed layouts, bounded text, narration, timing, and evidence paths.
+Generation is a three-pass Foundry pipeline:
 
-The active prompt contract is `presentation-v1`; the version and generation source are stored on every revision.
+1. **Strategy:** audience goal, core message, problem, solution, differentiators, evidence-backed proof points, narrative arc, voiceover direction, and a semantic demo recommendation.
+2. **Draft:** deck title and summary plus 3–20 typed slides.
+3. **Critic refinement:** quality scores and a fully revised final deck.
 
-Foundry transport is isolated from response parsing so fixture tests exercise empty output, malformed JSON, schema failures, evidence placement, and valid generation without weakening the runtime schema. An opt-in integration test runs the same contract against the configured deployment.
+The presentation copilot receives the brief, duration budget, optional normalized repository snapshot, and explicit response shapes. A persisted `PresentationRevision` includes the strategy; slide purpose, audience takeaway, typed layout, structured visual, narration, timing, and evidence paths. Visuals are statement, cards, flow, comparison, metrics, timeline, or demo; a demo visual contains setup, action, and payoff.
+
+The active prompt contract is `deck-intelligence-v2`; the version and generation source are stored on every revision. Successful generation normally makes three model calls. Each pass has a bounded retry for invalid JSON or contract failure, so failures can add at most one retry per pass.
+
+After critic output, deterministic validation requires hero first, closing last, problem and solution stages, visual variety, concise non-repeated on-screen claims, known evidence, narration, semantic-demo consistency, and exact runtime. Integer slide durations are normalized to the requested duration in proportion to narration word count. Narration must add context beyond visuals and must not describe clicks, taps, hovering, cursors, or other mouse actions.
+
+Foundry transport is isolated behind a typed chat-completion adapter. Fixture tests cover its request/response shape, while pipeline tests exercise malformed JSON, schema failures, evidence validation, bounded retries, and valid generation without weakening the runtime schema. An opt-in integration test runs the same contract against the configured deployment.
 
 ## Contextual revision
 
@@ -29,14 +37,14 @@ Chat does not overwrite free-form documents. It returns:
 }
 ```
 
-Unknown slide IDs, empty patches, invalid fields, and out-of-range values fail explicitly. Applying a patch creates a new immutable revision and invalidates approved output.
+Unknown slide IDs, empty patches, invalid fields, out-of-range values, unknown evidence paths, or invalid deck structure fail explicitly. Rich patches can update strategy-linked content, layouts, visual payloads, and demo setup/action/payoff. Applying a patch creates a new immutable revision and invalidates approved output.
 
 The opt-in Foundry verification also requests a real contextual patch and asserts that every referenced slide ID belongs to the generated revision.
 
 ## Trust boundary
 
-Repository excerpts are evidence, not instructions. They are serialized inside user context and never promoted to system messages. Generated factual claims should use `evidencePaths`; unsupported claims remain the user's responsibility to approve.
+Repository excerpts are evidence, not instructions. Discovery resolves an exact commit SHA, ranks a bounded tree selection, and reads selected content at that SHA. Excerpts are serialized as explicitly untrusted user context and never promoted to system messages. Generated factual claims must use known `evidencePaths`; unsupported claims are rejected.
 
 ## Evaluation set
 
-A Foundry evaluation dataset should include short, medium, and long briefs; briefs with and without repositories; prompt-injection text inside a README fixture; requested architecture slides; and timing boundaries at 1 and 10 minutes. Track schema validity, duration drift, required-section coverage, evidence precision, unsupported claims, and patch locality.
+A Foundry evaluation dataset should include short, medium, and long briefs; briefs with and without repositories; prompt-injection text inside a README fixture; requested architecture and demo slides; and timing boundaries at 1 and 10 minutes. Track pass-level schema validity and retries, duration exactness, required-section coverage, evidence precision, unsupported claims, narration/action-language violations, visual diversity, demo consistency, and patch locality.

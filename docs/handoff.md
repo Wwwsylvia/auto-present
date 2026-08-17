@@ -5,11 +5,11 @@
 The MVP implements a complete local workflow:
 
 1. Create a project from an idea, audience, tone, duration, and optional public GitHub URL; generation begins immediately.
-2. Generate a typed presentation using Microsoft Foundry when configured, or deterministic demo content otherwise, with visible progress feedback.
+2. Generate a deck-intelligence v2 presentation using Foundry strategy, draft, and critic-refinement passes when configured, or deterministic demo content otherwise, with visible progress feedback.
 3. Review and directly edit slides and narration using immutable revisions, then approve the entire deck with one clear action.
 4. Request validated contextual revisions from Foundry.
 5. Move through the Brief, Review deck, and Produce video stages.
-6. Optionally upload a demo clip that appears immediately before the closing slide.
+6. Optionally upload one demo clip only after approving a deck with a semantic demo slide; it renders at that slide.
 7. Render and download a captioned MP4. Local previews can be silent; final output requires Azure AI Speech.
 
 The product is named **Idea2Impact**. The completed MVP was developed on
@@ -41,7 +41,7 @@ single-web-replica.
 - `npm run build`
 - Browser inspection of the landing page and editor
 - End-to-end API flow from project creation through both approvals
-- Real FFmpeg preview render and MP4 download
+- Local FFmpeg preview render and MP4 download (not Foundry or Speech acceptance)
 
 Repository validation does not prove a live tenant deployment, Entra policy,
 role propagation, or Container Apps behavior. Run the live checks in the Azure
@@ -60,14 +60,16 @@ configuration.
 ## Remaining work, in priority order
 
 1. **Complete live Azure verification**
-   - Exercise initial generation and contextual revisions against the selected deployed model.
-   - Generate a narrated two-minute video and check voice quality, sentence caption timing, final duration, and transitions.
+   - Exercise strategy, draft, critic-refinement, and contextual revision calls against the selected deployed model.
+   - Confirm contracts, bounded retries, exact duration normalization, evidence citations, narration rules, and deterministic quality checks.
+   - Test prompt-injection text in repository evidence to confirm the untrusted-data boundary.
+   - Generate a narrated two-minute video and check voice quality, sentence caption timing, final duration, and layout-specific transitions.
    - Validate the deployment, shared storage, managed identities, Entra policy, and Container Apps Job behavior in the target tenant.
 
 2. **Run the self-presentation acceptance test**
    - Have Idea2Impact create its own two-minute hackathon pitch.
    - Require problem, use cases, solution, architecture, and visible Foundry usage.
-   - Add a short uploaded demo clip and export the final MP4.
+   - Confirm the generated deck recommends and contains a semantic demo slide before uploading a short clip; export the final MP4.
    - Record defects found during this run as the demo-polish backlog.
 
 3. **Improve production reliability**
@@ -88,9 +90,12 @@ configuration.
 ## Known limitations and risks
 
 - Persistence is JSON/file-backed and intended for a single-user demo with one web replica.
-- Public GitHub analysis is intentionally limited to selected root files.
+- Public GitHub analysis is intentionally bounded: evidence discovery ranks eligible files from the default-branch head's exact-SHA tree and reads only selected excerpts at that SHA.
 - Private repositories, accounts, sharing, PPTX, collaboration, billing, and automatic browser recording are out of scope.
 - Live Azure integration remains tenant-specific and cannot be proven by repository-only checks.
+- Existing `presentation-v1` saved projects are intentionally incompatible. Their records are preserved but ignored; regenerate or remove them. No migration exists.
+- Real Foundry and Azure AI Speech acceptance have not yet been run for deck-intelligence v2.
+- `npm audit --omit=dev` currently reports advisories through the installed Next.js/PostCSS dependency chain. The suggested automatic fix downgrades Next.js to an incompatible old version; reassess when a patched compatible release is available.
 
 ## Recommended next-session prompt
 
