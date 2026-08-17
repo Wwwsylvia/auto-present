@@ -8,7 +8,7 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 - Optional bounded analysis of public GitHub repositories
 - Microsoft Foundry-backed structured presentation generation
 - Deterministic demo generation when Foundry is not configured
-- Three-stage Plan → Create → Produce workflow with approval gates
+- Three-step Brief → Review deck → Produce video workflow with one whole-deck approval
 - Revision-safe direct slide and narration editing
 - Contextual Foundry revisions expressed as validated typed patches
 - Optional MP4, WebM, or QuickTime demo-clip insertion

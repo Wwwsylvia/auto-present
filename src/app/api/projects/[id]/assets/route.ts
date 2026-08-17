@@ -29,25 +29,58 @@ export async function POST(
   const localPath = path.join(directory, `${assetId}${extension}`);
   await fs.mkdir(directory, { recursive: true });
   await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
+  let replacedPath = "";
   try {
-    const project = await updateProject(id, (current) => ({
-      ...current,
-      assets: [
-        ...current.assets.filter((asset) => asset.kind !== "demo-video"),
-        {
-          id: assetId,
-          kind: "demo-video" as const,
-          name: upload.name,
-          mimeType: upload.type,
-          size: upload.size,
-          localPath,
-        },
-      ],
-    }));
+    const project = await updateProject(id, (current) => {
+      replacedPath = current.assets.find((asset) => asset.kind === "demo-video")?.localPath ?? "";
+      return {
+        ...current,
+        assets: [
+          ...current.assets.filter((asset) => asset.kind !== "demo-video"),
+          {
+            id: assetId,
+            kind: "demo-video" as const,
+            name: upload.name,
+            mimeType: upload.type,
+            size: upload.size,
+            localPath,
+          },
+        ],
+      };
+    });
+    if (replacedPath && replacedPath !== localPath) {
+      try {
+        await fs.rm(replacedPath, { force: true });
+      } catch (error) {
+        console.error("Could not remove replaced demo clip", error);
+      }
+    }
     return NextResponse.json(project);
   } catch (error) {
     await fs.rm(localPath, { force: true });
     const message = error instanceof Error ? error.message : "Upload failed";
+    return NextResponse.json({ error: message }, { status: 404 });
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  let removedPath = "";
+  try {
+    const project = await updateProject(id, (current) => {
+      removedPath = current.assets.find((asset) => asset.kind === "demo-video")?.localPath ?? "";
+      return {
+        ...current,
+        assets: current.assets.filter((asset) => asset.kind !== "demo-video"),
+      };
+    });
+    if (removedPath) await fs.rm(removedPath, { force: true });
+    return NextResponse.json(project);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not remove the demo clip";
     return NextResponse.json({ error: message }, { status: 404 });
   }
 }
