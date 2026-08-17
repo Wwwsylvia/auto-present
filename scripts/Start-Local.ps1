@@ -47,6 +47,7 @@ $configurationVariables = @(
     'AZURE_SPEECH_VOICE',
     'AZURE_CONFIG_DIR',
     'AZURE_AUTHORITY_HOST',
+    'AZURE_TOKEN_CREDENTIALS',
     'GITHUB_TOKEN'
 )
 
@@ -103,6 +104,14 @@ foreach ($command in @('node', 'npm', 'ffmpeg', 'ffprobe')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "Required command '$command' was not found on PATH."
     }
+
+    $environmentFile = Join-Path $repositoryRoot '.env.local'
+    $effectiveGitHubToken = (& node "--env-file-if-exists=$environmentFile" -e "process.stdout.write(process.env.GITHUB_TOKEN || '')")
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the effective GitHub token configuration.'
+    }
+    $env:GITHUB_TOKEN = "$effectiveGitHubToken"
+    $effectiveGitHubToken = $null
 }
 
 if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
@@ -132,6 +141,13 @@ if ($AzureBacked) {
         'AZURE_FEDERATED_TOKEN_FILE'
     )) {
         Set-Item "Env:$name" -Value ''
+    }
+    $env:AZURE_TOKEN_CREDENTIALS = 'AzureCliCredential'
+    if ([string]::IsNullOrWhiteSpace($env:AZURE_CONFIG_DIR)) {
+        $env:AZURE_CONFIG_DIR = Join-Path $HOME '.azure'
+    }
+    if ([string]::IsNullOrWhiteSpace($env:AZURE_AUTHORITY_HOST)) {
+        $env:AZURE_AUTHORITY_HOST = 'https://login.microsoftonline.com'
     }
 
     $hasExplicitServiceConfiguration =

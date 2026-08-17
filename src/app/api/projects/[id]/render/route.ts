@@ -12,6 +12,8 @@ import type { RenderJob } from "@/lib/domain";
 import { updateProject } from "@/lib/store";
 import { publicErrorMessage, rejectUnsafeRequest } from "@/lib/http";
 
+export const maxDuration = 300;
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -31,6 +33,9 @@ export async function POST(
         return current;
       }
       const queuedJob = createQueuedRenderJob(current, kind);
+      if ((process.env.RENDER_EXECUTION_MODE ?? "local") === "local") {
+        queuedJob.dispatchLeaseExpiresAt = new Date(Date.now() + 2 * 60_000).toISOString();
+      }
       job = queuedJob;
       created = true;
       const projectWithJob = {
@@ -76,6 +81,16 @@ export async function POST(
           lastError: message,
         }));
         return NextResponse.json(updated, { status: 202 });
+      }
+      if (currentStatus?.status === "complete") {
+        const updated = await updateProject(id, (current) => ({
+          ...current,
+          renderJobs: current.renderJobs.map((item) =>
+            item.id === job?.id && item.status !== "stale" ? currentStatus : item,
+          ),
+          lastError: null,
+        }));
+        return NextResponse.json(updated);
       }
       const failed =
         currentStatus?.status === "stale"

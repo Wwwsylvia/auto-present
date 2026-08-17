@@ -70,6 +70,50 @@ if (-not (Test-Path -LiteralPath $dockerfilePath)) {
     throw "Dockerfile not found at $dockerfilePath"
 }
 
+$loginServer = (& az acr show `
+        --name $RegistryName `
+        --subscription $SubscriptionId `
+        --query loginServer `
+        --output tsv `
+        --only-show-errors)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($loginServer)) {
+    throw 'Unable to resolve the registry login server.'
+}
+
+if (-not $SkipWorkloadUpdate) {
+    $previousJobImage = (& az containerapp job show `
+            --name $RenderJobName `
+            --resource-group $ResourceGroupName `
+            --subscription $SubscriptionId `
+            --query properties.template.containers[0].image `
+            --output tsv `
+            --only-show-errors)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($previousJobImage)) {
+        throw 'Unable to resolve the currently deployed render worker image.'
+    }
+
+    $previousJobImageForRollback = $previousJobImage
+    $registryPrefix = "$loginServer/"
+    if ($previousJobImage.StartsWith($registryPrefix) -and $previousJobImage -notmatch '@') {
+        $previousImageReference = $previousJobImage.Substring($registryPrefix.Length)
+        $tagSeparator = $previousImageReference.LastIndexOf(':')
+        if ($tagSeparator -lt 1) {
+            throw "Unable to resolve an immutable rollback reference for '$previousJobImage'."
+        }
+        $previousRepository = $previousImageReference.Substring(0, $tagSeparator)
+        $previousDigest = (& az acr repository show `
+                --name $RegistryName `
+                --image $previousImageReference `
+                --query digest `
+                --output tsv `
+                --only-show-errors)
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($previousDigest)) {
+            throw "Unable to resolve an immutable rollback reference for '$previousJobImage'."
+        }
+        $previousJobImageForRollback = "$loginServer/$previousRepository@$previousDigest"
+    }
+}
+
 $runId = (& az acr build `
         --registry $RegistryName `
         --subscription $SubscriptionId `
@@ -107,29 +151,18 @@ if ($runStatus -ne 'Succeeded') {
     throw "ACR build '$runId' did not complete within 30 minutes."
 }
 
-$loginServer = (& az acr show `
+$imageDigest = (& az acr repository show `
     --name $RegistryName `
-    --subscription $SubscriptionId `
-    --query loginServer `
+    --image "${ImageRepository}:$ImageTag" `
+    --query digest `
     --output tsv `
     --only-show-errors)
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($loginServer)) {
-    throw 'Unable to resolve the registry login server.'
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($imageDigest)) {
+    throw 'Unable to resolve the built image digest.'
 }
-$image = "$loginServer/${ImageRepository}:$ImageTag"
+$image = "$loginServer/${ImageRepository}@$imageDigest"
 
 if (-not $SkipWorkloadUpdate) {
-    $previousJobImage = (& az containerapp job show `
-        --name $RenderJobName `
-        --resource-group $ResourceGroupName `
-        --subscription $SubscriptionId `
-        --query properties.template.containers[0].image `
-        --output tsv `
-        --only-show-errors)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($previousJobImage)) {
-        throw 'Unable to resolve the currently deployed render worker image.'
-    }
-
     Invoke-Az containerapp job update `
         --name $RenderJobName `
         --resource-group $ResourceGroupName `
@@ -154,7 +187,7 @@ if (-not $SkipWorkloadUpdate) {
                 --name $RenderJobName `
                 --resource-group $ResourceGroupName `
                 --subscription $SubscriptionId `
-                --image $previousJobImage `
+                --image $previousJobImageForRollback `
                 --only-show-errors `
                 --output none
         }

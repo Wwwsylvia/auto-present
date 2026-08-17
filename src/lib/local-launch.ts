@@ -13,6 +13,7 @@ export const localLaunchFingerprintVariables = [
   "AZURE_SPEECH_VOICE",
   "AZURE_CONFIG_DIR",
   "AZURE_AUTHORITY_HOST",
+  "AZURE_TOKEN_CREDENTIALS",
   "GITHUB_TOKEN",
 ] as const;
 

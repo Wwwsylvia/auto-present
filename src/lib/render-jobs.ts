@@ -500,10 +500,7 @@ export async function markRenderJobsStale(jobs: RenderJob[]): Promise<void> {
         });
       });
       try {
-        await fs.rm(path.join(renderDirectory(), validateJobId(job.id)), {
-          recursive: true,
-          force: true,
-        });
+        await cleanupStaleRenderOutput(job.id);
       } catch {
         console.warn(`[Idea2Impact] Could not remove stale render output ${job.id}`);
       }
@@ -526,10 +523,28 @@ export async function discardRenderJob(id: string): Promise<void> {
   ]);
 }
 
+async function cleanupStaleRenderOutput(id: string): Promise<void> {
+  await fs.rm(path.join(renderDirectory(), validateJobId(id)), {
+    recursive: true,
+    force: true,
+  });
+}
+
 export async function reconcileRenderJobs(project: Project): Promise<RenderJob[]> {
   return Promise.all(
     project.renderJobs.map(async (job) => {
-      if (job.status === "stale") return job;
+      if (job.status === "stale") {
+        await Promise.all([cleanupRenderInputs(job.id), cleanupStaleRenderOutput(job.id)]).catch(
+          (error) => {
+          console.warn(
+            `[Idea2Impact] Could not retry stale render cleanup ${job.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          },
+        );
+        return job;
+      }
       let status = await readRenderStatus(job.id);
       if (!status && (job.status === "queued" || job.status === "rendering")) {
         status = {
@@ -558,10 +573,13 @@ export async function reconcileRenderJobs(project: Project): Promise<RenderJob[]
                 Boolean(current.leaseExpiresAt) &&
                 Date.parse(current.leaseExpiresAt!) <= Date.now()));
           const localLeaseExpired =
-            current.status === "rendering" &&
             process.env.RENDER_EXECUTION_MODE !== "container-apps-job" &&
-            Boolean(current.leaseExpiresAt) &&
-            Date.parse(current.leaseExpiresAt!) <= Date.now();
+            ((current.status === "rendering" &&
+              Boolean(current.leaseExpiresAt) &&
+              Date.parse(current.leaseExpiresAt!) <= Date.now()) ||
+              (current.status === "queued" &&
+                (!current.dispatchLeaseExpiresAt ||
+                  Date.parse(current.dispatchLeaseExpiresAt) <= Date.now())));
           if (!cloudExhausted && !localLeaseExpired) {
             status = current;
             return;

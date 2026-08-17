@@ -406,6 +406,7 @@ finally {
 }
 
 $externalIngressEnableAttempted = $false
+$privateIngressRestoreRequired = $false
 try {
     $outputs = $deploymentJson | ConvertFrom-Json
 
@@ -468,6 +469,7 @@ try {
         throw 'External ingress was requested but could not be verified.'
     }
     if (-not $EnableExternalIngress -and $webState.external -eq $true) {
+        $privateIngressRestoreRequired = $true
         throw 'External ingress remained enabled unexpectedly.'
     }
 
@@ -495,7 +497,7 @@ try {
 }
 catch {
     $deploymentFailure = $_
-    if ($EnableExternalIngress -and $externalIngressEnableAttempted) {
+    if ($externalIngressEnableAttempted -or $privateIngressRestoreRequired) {
         try {
             Restore-PrivateIngressAndVerify `
                 -ContainerAppName $outputs.webContainerAppName.value `

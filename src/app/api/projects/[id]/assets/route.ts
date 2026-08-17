@@ -63,3 +63,27 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 404 });
   }
 }
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
+  const { id } = await params;
+  let removedPath = "";
+  try {
+    const project = await updateProject(id, (current) => {
+      removedPath = current.assets.find((asset) => asset.kind === "demo-video")?.localPath ?? "";
+      return {
+        ...current,
+        assets: current.assets.filter((asset) => asset.kind !== "demo-video"),
+      };
+    });
+    await removeFilesBestEffort(removedPath ? [removedPath] : []);
+    return NextResponse.json(project);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not remove the demo clip";
+    return NextResponse.json({ error: message }, { status: 404 });
+  }
+}

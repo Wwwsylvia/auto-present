@@ -16,9 +16,9 @@ use.
 
 ## Workflow
 
-1. **Plan:** provide an idea and optional public GitHub URL, generate an evidence-aware outline, edit it, and approve it.
-2. **Create:** review the deck and narration together, edit fields directly or request a contextual AI revision, and approve the active revision.
-3. **Produce:** optionally add a demo clip, render a preview, then render and download a narrated final MP4.
+1. **Brief:** provide an idea and optional public GitHub URL. Submission immediately generates an evidence-aware deck and narration.
+2. **Review deck:** review slides and narration together, edit fields directly or request a contextual AI revision, then approve the entire active revision.
+3. **Produce video:** optionally add a demo clip immediately before the closing slide, render a preview, then render and download a narrated final MP4.
 
 ## Acceptance criteria
 

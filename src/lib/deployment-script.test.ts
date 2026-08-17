@@ -47,6 +47,7 @@ test("failed external ingress activation restores private ingress", async () => 
     script,
     /catch\s*\{[\s\S]*\$externalIngressEnableAttempted[\s\S]*Restore-PrivateIngressAndVerify/,
   );
+  assert.match(script, /privateIngressRestoreRequired/);
   assert.match(
     script,
     /properties\.configuration\.ingress\.external[\s\S]*ToLowerInvariant\(\) -ne 'false'/,
@@ -79,5 +80,8 @@ test("image rollout updates the compatible worker first and rolls it back on fai
   const webUpdate = script.indexOf("Invoke-Az containerapp update");
   assert.ok(workerUpdate >= 0 && webUpdate > workerUpdate);
   assert.match(script, /previousJobImage/);
+  assert.match(script, /previousJobImageForRollback/);
+  assert.match(script, /previousImageReference[\s\S]*--query digest/);
+  assert.match(script, /\$image = "\$loginServer\/\$\{ImageRepository\}@\$imageDigest"/);
   assert.match(script, /Web update failed and the render worker rollback also failed/);
 });

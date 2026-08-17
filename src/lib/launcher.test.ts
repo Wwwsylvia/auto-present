@@ -13,6 +13,7 @@ test("local launcher rejects non-loopback listeners before reuse", async () => {
   assert.doesNotMatch(script, /Get-NetTCPConnection[\s\S]{0,120}Select-Object -First 1/);
   assert.match(script, /Get-HealthMismatches/);
   assert.match(script, /configurationFingerprint/);
+  assert.match(script, /--env-file-if-exists=\$environmentFile/);
   assert.match(script, /data directory/);
   assert.match(script, /service mode/);
   assert.match(script, /server mode/);

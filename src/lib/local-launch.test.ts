@@ -30,6 +30,7 @@ test("local launch health metadata is explicit and credential-safe", () => {
       "AZURE_SPEECH_VOICE",
       "AZURE_CONFIG_DIR",
       "AZURE_AUTHORITY_HOST",
+      "AZURE_TOKEN_CREDENTIALS",
       "GITHUB_TOKEN",
     ]);
   } finally {

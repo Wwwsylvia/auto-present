@@ -195,20 +195,23 @@ export async function renderPresentation(
   const segmentFiles: string[] = [];
   let elapsed = 0;
   const captions: CaptionCue[] = [];
+  const closingIndex = revision.slides.length - 1;
+  const demoAsset = project.assets.find((asset) => asset.kind === "demo-video");
+  if (demoAsset && revision.slides[closingIndex]?.layout !== "closing") {
+    throw new Error("The demo clip needs a closing slide in the approved deck");
+  }
+  const demoIndex = closingIndex - 1;
   for (const [index, slide] of revision.slides.entries()) {
     const image = `slide-${index}.png`;
     const segment = `segment-${index}.mp4`;
     await sharp(Buffer.from(slideSvg(slide, index))).png().toFile(path.join(jobDirectory, image));
     const duration = slide.durationSeconds;
     let renderedDuration = duration;
-    const demoAsset =
-      slide.layout === "demo"
-        ? project.assets.find((asset) => asset.kind === "demo-video")
-        : undefined;
-    const visualInput = demoAsset
-      ? ["-stream_loop", "-1", "-i", demoAsset.localPath]
+    const segmentDemoAsset = index === demoIndex ? demoAsset : undefined;
+    const visualInput = segmentDemoAsset
+      ? ["-stream_loop", "-1", "-i", segmentDemoAsset.localPath]
       : ["-loop", "1", "-i", image];
-    const visualFilter = demoAsset
+    const visualFilter = segmentDemoAsset
       ? "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
       : "scale=1280:720";
     if (hasSpeech) {

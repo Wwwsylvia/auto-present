@@ -243,6 +243,14 @@ test("stale invalidation removes canonical output and disables downloads", async
     await markRenderJobsStale([job]);
     assert.equal(await isRenderDownloadAvailable(job.id), false);
     await assert.rejects(access(output));
+
+    await mkdir(path.dirname(output), { recursive: true });
+    await writeFile(output, "retry cleanup");
+    await reconcileRenderJobs({
+      ...project,
+      renderJobs: [{ ...job, status: "stale", progress: 0 }],
+    });
+    await assert.rejects(access(output));
   } finally {
     if (previous === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
     else process.env.IDEA2IMPACT_DATA_DIR = previous;
@@ -330,6 +338,29 @@ test("reconciliation terminalizes legacy active jobs without sidecars", async ()
   } finally {
     if (previous === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
     else process.env.IDEA2IMPACT_DATA_DIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("reconciliation terminalizes abandoned local queued jobs", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "idea2impact-local-queued-"));
+  const previousDirectory = process.env.IDEA2IMPACT_DATA_DIR;
+  const previousMode = process.env.RENDER_EXECUTION_MODE;
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  process.env.RENDER_EXECUTION_MODE = "local";
+  try {
+    const project = approvedProject();
+    const job = createQueuedRenderJob(project, "preview");
+    project.renderJobs.push(job);
+    await writeRenderManifest(job, project);
+    const reconciled = await reconcileRenderJobs(project);
+    assert.equal(reconciled[0].status, "failed");
+    assert.match(reconciled[0].error ?? "", /worker lease expired/);
+  } finally {
+    if (previousDirectory === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previousDirectory;
+    if (previousMode === undefined) delete process.env.RENDER_EXECUTION_MODE;
+    else process.env.RENDER_EXECUTION_MODE = previousMode;
     await rm(directory, { recursive: true, force: true });
   }
 });
