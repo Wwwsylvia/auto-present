@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ProjectWorkspace } from "@/components/project-workspace";
+import { foundryConfigured } from "@/lib/config";
 import { getProject } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <span>{project.input.durationMinutes} min</span>
         </div>
       </header>
-      <ProjectWorkspace initialProject={project} />
+      <ProjectWorkspace
+        foundryConfigured={foundryConfigured()}
+        initialProject={project}
+      />
     </main>
   );
 }

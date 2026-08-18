@@ -13,8 +13,6 @@ import {
   type Visual,
 } from "@/lib/domain";
 
-const foundryConfigured = process.env.NEXT_PUBLIC_FOUNDRY_CONFIGURED === "true";
-
 function formatTime(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
@@ -191,7 +189,13 @@ function visualFromForm(formData: FormData, visual: Visual): Visual {
   }
 }
 
-export function ProjectWorkspace({ initialProject }: { initialProject: Project }) {
+export function ProjectWorkspace({
+  foundryConfigured,
+  initialProject,
+}: {
+  foundryConfigured: boolean;
+  initialProject: Project;
+}) {
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const revision = activeRevision(project);
@@ -208,6 +212,20 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
   const total = revision ? actualDurationSeconds(revision) : 0;
   const target = project.input.durationMinutes * 60;
   const durationStatus = Math.round(((total - target) / target) * 100);
+  const activeRender = project.renderJobs.some((job) =>
+    ["queued", "rendering", "retrying"].includes(job.status),
+  );
+
+  useEffect(() => {
+    if (!activeRender) return;
+    const interval = window.setInterval(async () => {
+      const response = await fetch(`/api/projects/${project.id}`, {
+        cache: "no-store",
+      });
+      if (response.ok) setProject(await response.json());
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [activeRender, project.id]);
 
   useEffect(() => {
     function warnBeforeUnload(event: BeforeUnloadEvent) {
@@ -252,16 +270,43 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
   }
 
   async function render(kind: "preview" | "final") {
-    setPending(`render-${kind}`); setError(null); setNotice(`${kind === "preview" ? "Preview" : "Final video"} rendering started.`);
-    const response = await fetch(`/api/projects/${project.id}/render`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }) });
-    const body = await response.json(); setPending("");
+    setPending(`render-${kind}`);
+    setError(null);
+    setNotice(`${kind === "preview" ? "Preview" : "Final video"} queued.`);
+    const response = await fetch(`/api/projects/${project.id}/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    const body = await response.json();
+    setPending("");
     if (!response.ok) {
       reportError("render", body.error ?? "Rendering failed");
       const latest = await fetch(`/api/projects/${project.id}`).then((result) => result.json());
       if (latest.id) setProject(latest);
       return;
     }
-    setProject(body); setNotice(`${kind === "preview" ? "Preview" : "Final video"} is ready to download.`); router.refresh();
+    setProject(body);
+    setNotice(`${kind === "preview" ? "Preview" : "Final video"} queued for background rendering.`);
+    router.refresh();
+  }
+
+  async function retryRender(id: string) {
+    setPending(`retry-${id}`);
+    setError(null);
+    const response = await fetch(`/api/render-jobs/${id}/retry`, {
+      method: "POST",
+    });
+    const body = await response.json();
+    setPending("");
+    if (!response.ok) {
+      setError({ area: "render", message: body.error ?? "The render could not be retried" });
+      return;
+    }
+    setProject((current) => ({
+      ...current,
+      renderJobs: current.renderJobs.map((job) => (job.id === id ? body : job)),
+    }));
   }
 
   async function saveSlide(formData: FormData) {
@@ -379,9 +424,115 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
     const demoSlide = revision.slides.find((slide) => slide.layout === "demo" && slide.visual.type === "demo");
     const canUseDemo = hasSemanticDemo(revision, project.approvedDeckRevisionId);
     const demo = project.assets.find((asset) => asset.kind === "demo-video");
-    const activeJobs = project.renderJobs.filter((job) => job.status === "queued" || job.status === "rendering");
-    const latestVideo = project.renderJobs.findLast((job) => job.revisionId === revision.id && job.status === "complete" && job.outputUrl);
-    return <>{stageNav}<main className="production-workspace"><header className="production-heading"><div><button className="text-button back-link" onClick={() => navigateStage("review")} type="button">← Back to deck</button><h1>Bring the approved story to life.</h1></div><div className="production-heading-actions"><button className="secondary" onClick={() => navigateStage("brief")} type="button">Edit brief</button><button className="secondary" onClick={() => navigateStage("review")} type="button">Edit deck</button><div className="approved-badge">✓ Deck approved</div></div></header>{notice && <p className="success" role="status">{notice}</p>}<div className="production-grid"><section className="production-panel">{canUseDemo && demoSlide?.visual.type === "demo" ? <><h2>Demo moment</h2><p className="demo-guidance">The clip supports this slide&apos;s promised proof. Keep the voiceover focused on the audience outcome—not controls.</p><dl className="demo-plan"><div><dt>Setup</dt><dd>{demoSlide.visual.setup}</dd></div><div><dt>Action</dt><dd>{demoSlide.visual.action}</dd></div><div><dt>Payoff</dt><dd>{demoSlide.visual.payoff}</dd></div></dl><p className="field-help">MP4, WebM, or QuickTime · maximum 100 MB</p>{demo ? <div className="asset-summary"><div><strong>{demo.name}</strong><small>{(demo.size / 1024 / 1024).toFixed(1)} MB</small></div><button className="text-button" disabled={Boolean(pending)} onClick={() => void removeDemo()} type="button">{pending === "remove" ? "Removing..." : "Remove"}</button></div> : null}<form action={uploadDemo} className="asset-upload"><input accept="video/mp4,video/webm,video/quicktime" name="file" required type="file" /><button className="secondary" disabled={Boolean(pending)} type="submit">{pending === "upload" ? "Uploading..." : demo ? "Replace demo clip" : "Upload demo clip"}</button></form></> : <><h2>No demo clip for this deck</h2><p>This approved deck does not contain a semantic demo slide, so a video upload would not have a defined story moment.</p><p className="demo-guidance">{revision.strategy.demoPlan.rationale}</p></>}{error?.area === "upload" && <p className="error" role="alert">{error.message}</p>}</section><section className="production-panel production-render"><h2>Render and review</h2><p>Render a quick preview first, then create the narrated final MP4 when it looks right.</p>{latestVideo?.outputUrl && <video className="video-preview" controls key={latestVideo.id} preload="metadata" src={latestVideo.outputUrl}>Your browser does not support video playback.</video>}<div className="render-actions"><button className="secondary" disabled={Boolean(pending)} onClick={() => void render("preview")}>{pending === "render-preview" ? "Rendering preview..." : "Render preview"}</button><button className="primary" disabled={Boolean(pending)} onClick={() => void render("final")}>{pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span></button></div>{(pending.startsWith("render-") || activeJobs.length > 0) && <div className="render-progress" role="status"><div className="progress-track"><span /></div><strong>Rendering video</strong><p>This can take a few minutes. Keep this page open.</p></div>}{error?.area === "render" && <p className="error" role="alert">{error.message}</p>}<div className="render-list">{project.renderJobs.map((job) => <div className={`render-result status-${job.status}`} key={job.id}><span>{job.kind} · {job.status}{job.status === "stale" ? " · older deck" : ""}</span>{job.outputUrl && <a href={job.outputUrl}>Download MP4 ↓</a>}{job.error && <small>{job.error}</small>}</div>)}</div></section></div></main></>;
+    const activeJobs = project.renderJobs.filter((job) =>
+      ["queued", "rendering", "retrying"].includes(job.status),
+    );
+    const latestVideo = project.renderJobs.findLast(
+      (job) => job.revisionId === revision.id && job.status === "complete" && job.outputUrl,
+    );
+    return (
+      <>
+        {stageNav}
+        <main className="production-workspace">
+          <header className="production-heading">
+            <div>
+              <button className="text-button back-link" onClick={() => navigateStage("review")} type="button">← Back to deck</button>
+              <h1>Bring the approved story to life.</h1>
+            </div>
+            <div className="production-heading-actions">
+              <button className="secondary" onClick={() => navigateStage("brief")} type="button">Edit brief</button>
+              <button className="secondary" onClick={() => navigateStage("review")} type="button">Edit deck</button>
+              <div className="approved-badge">✓ Deck approved</div>
+            </div>
+          </header>
+          {notice && <p className="success" role="status">{notice}</p>}
+          <div className="production-grid">
+            <section className="production-panel">
+              {canUseDemo && demoSlide?.visual.type === "demo" ? (
+                <>
+                  <h2>Demo moment</h2>
+                  <p className="demo-guidance">
+                    The clip supports this slide&apos;s promised proof. Keep the voiceover focused on
+                    the audience outcome—not controls.
+                  </p>
+                  <dl className="demo-plan">
+                    <div><dt>Setup</dt><dd>{demoSlide.visual.setup}</dd></div>
+                    <div><dt>Action</dt><dd>{demoSlide.visual.action}</dd></div>
+                    <div><dt>Payoff</dt><dd>{demoSlide.visual.payoff}</dd></div>
+                  </dl>
+                  <p className="field-help">MP4, WebM, or QuickTime · maximum 100 MB</p>
+                  {demo && (
+                    <div className="asset-summary">
+                      <div><strong>{demo.name}</strong><small>{(demo.size / 1024 / 1024).toFixed(1)} MB</small></div>
+                      <button className="text-button" disabled={Boolean(pending)} onClick={() => void removeDemo()} type="button">
+                        {pending === "remove" ? "Removing..." : "Remove"}
+                      </button>
+                    </div>
+                  )}
+                  <form action={uploadDemo} className="asset-upload">
+                    <input accept="video/mp4,video/webm,video/quicktime" name="file" required type="file" />
+                    <button className="secondary" disabled={Boolean(pending)} type="submit">
+                      {pending === "upload" ? "Uploading..." : demo ? "Replace demo clip" : "Upload demo clip"}
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <h2>No demo clip for this deck</h2>
+                  <p>This approved deck does not contain a semantic demo slide, so a video upload would not have a defined story moment.</p>
+                  <p className="demo-guidance">{revision.strategy.demoPlan.rationale}</p>
+                </>
+              )}
+              {error?.area === "upload" && <p className="error" role="alert">{error.message}</p>}
+            </section>
+            <section className="production-panel production-render">
+              <h2>Render and download</h2>
+              <p>Render a quick preview first, then create the narrated final MP4 when it looks right.</p>
+              {latestVideo?.outputUrl && (
+                <video className="video-preview" controls key={latestVideo.id} preload="metadata" src={latestVideo.outputUrl}>
+                  Your browser does not support video playback.
+                </video>
+              )}
+              <div className="render-actions">
+                <button className="secondary" disabled={Boolean(pending)} onClick={() => void render("preview")}>
+                  {pending === "render-preview" ? "Queuing preview..." : "Render preview"}
+                </button>
+                <button className="primary" disabled={Boolean(pending)} onClick={() => void render("final")}>
+                  {pending === "render-final" ? "Queuing final..." : "Render final MP4"}<span>→</span>
+                </button>
+              </div>
+              {(pending.startsWith("render-") || activeJobs.length > 0) && (
+                <div className="render-progress" role="status">
+                  <div className="progress-track"><span /></div>
+                  <strong>Rendering video in the background</strong>
+                  <p>Progress updates appear automatically.</p>
+                </div>
+              )}
+              {error?.area === "render" && <p className="error" role="alert">{error.message}</p>}
+              <div className="render-list">
+                {project.renderJobs.filter((job) => job.status !== "stale").map((job) => (
+                  <div className={`render-result status-${job.status}`} key={job.id}>
+                    <span>{job.kind} · {job.status}{["rendering", "retrying"].includes(job.status) ? ` · ${job.progress}%` : ""}</span>
+                    {job.status === "complete" && job.outputUrl && <a href={job.outputUrl}>Download MP4 ↓</a>}
+                    {job.status === "failed" && (
+                      <button
+                        className="secondary"
+                        disabled={pending === `retry-${job.id}`}
+                        onClick={() => void retryRender(job.id)}
+                        type="button"
+                      >
+                        {pending === `retry-${job.id}` ? "Retrying..." : "Retry render"}
+                      </button>
+                    )}
+                    {job.error && <small>{job.error}</small>}
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </main>
+      </>
+    );
   }
 
   return <>{stageNav}<section className="approval-bar"><button className="secondary back-button" onClick={() => navigateStage("brief")} type="button">← Back to brief</button><div><strong>Review the entire deck</strong><span>Approval includes all slides and narration, not only the selected slide.</span></div><button className="primary" disabled={Boolean(pending)} onClick={() => void approveDeck()} type="button">{pending === "approve" ? "Approving deck..." : "Approve entire deck & continue to video"}<span>→</span></button>{error?.area === "approve" && <p className="error" role="alert">{error.message}</p>}</section>{notice && <p className="workspace-notice success" role="status">{notice}</p>}<section className="workspace review-workspace"><aside className="slide-list"><div className="panel-heading"><span>{revision.slides.length} slides</span><span>{formatTime(total)}</span></div>{revision.slides.map((slide, index) => <button className={slide.id === selected?.id ? "thumbnail selected" : "thumbnail"} key={slide.id} onClick={() => selectSlide(slide.id)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{slide.title}</strong><small>{slide.layout} · {slide.visual.type}</small></div><time>{formatTime(slide.durationSeconds)}</time></button>)}</aside><div className="preview-panel"><div className="preview-toolbar"><div><span className={`source source-${revision.source}`}>{revision.source === "demo" ? "Demo content" : "AI generated"}</span>Revision {revision.version}</div><div className={Math.abs(durationStatus) > 10 ? "duration-warning" : "duration-ok"}>{formatTime(total)} / {formatTime(target)} target</div></div>{selected && <SlidePreview slide={selected} />}<div className="slide-intent"><div><span>Audience takeaway</span><p>{selected?.audienceTakeaway}</p></div><div><span>Visual intent</span><p>{selected && visualLabel(selected.visual)} — the on-screen structure is designed to make this slide&apos;s point scannable before the narration adds context.</p></div></div><div className="narration-preview"><strong>Voiceover</strong><p>{selected?.narration}</p></div><StrategyPanel strategy={revision.strategy} /><section className="revision-history"><div className="panel-heading"><strong>Revision history</strong><span>{project.revisions.length} versions</span></div>{project.revisions.toReversed().map((item) => <div className={item.id === revision.id ? "revision-row current" : "revision-row"} key={item.id}><div><strong>Revision {item.version}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.source === "demo" ? "Demo" : "AI"}</small></div><button className="text-button" disabled={Boolean(pending) || item.id === revision.id} onClick={() => void restoreRevision(item.id)} type="button">{item.id === revision.id ? "Current" : "Restore"}</button></div>)}{error?.area === "restore" && <p className="error" role="alert">{error.message}</p>}</section></div>{selected && <aside className="properties-panel" key={`${revision.id}-${selected.id}`}><form action={saveSlide} className="edit-slide-form" onChange={() => setDirty(true)}><div className="panel-heading"><strong>Edit slide</strong><span>{selected.layout} · {selected.visual.type}</span></div><label>Title<input name="title" defaultValue={selected.title} required /></label><label>Purpose<input name="purpose" defaultValue={selected.purpose} required /><small className="field-help">The role this slide plays in your story.</small></label><label>Audience takeaway<textarea name="audienceTakeaway" defaultValue={selected.audienceTakeaway} required rows={3} /></label><label>Key points<textarea name="bullets" rows={5} defaultValue={selected.bullets.join("\n")} /><small className="field-help">Each line becomes one bullet.</small></label><VisualEditor visual={selected.visual} /><NarrationEditor slide={selected} />{dirty && <p className="unsaved-note" role="status">Unsaved changes</p>}{error?.area === "save" && <p className="error" role="alert">{error.message}</p>}<button className="secondary" disabled={pending === "save" || !dirty} type="submit">{pending === "save" ? "Saving..." : "Save slide changes"}</button></form><div className="copilot-divider"><span>or request a revision</span></div><div className="copilot-box"><div><span className="copilot-spark">✦</span><strong>Contextual revision</strong></div>{foundryConfigured ? <><p>Describe the outcome you want. Changes are validated before being saved.</p><form action={revise}><textarea name="instruction" rows={3} placeholder="Make the architecture slide more technical..." /><button className="secondary" disabled={pending === "revise"} type="submit">{pending === "revise" ? "Applying..." : "Apply AI revision"}</button></form></> : <p>AI revisions are unavailable in demo mode. Edit the slide fields directly instead.</p>}{error?.area === "revise" && <p className="error" role="alert">{error.message}</p>}{changeSummary && <p className="change-summary">{changeSummary}</p>}</div></aside>}</section></>;

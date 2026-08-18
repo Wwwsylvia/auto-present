@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { dataDirectory } from "@/lib/config";
 import { Project, projectSchema, type ProjectInput } from "@/lib/domain";
+import { hydrateRenderJobs } from "@/lib/render-queue";
 
-const dataDirectory = process.env.IDEA2IMPACT_DATA_DIR
-  ? path.resolve(process.env.IDEA2IMPACT_DATA_DIR)
-  : path.join(process.cwd(), ".data");
-const projectsFile = path.join(dataDirectory, "projects.json");
+const projectsFile = path.join(dataDirectory(), "projects.json");
 
 let writeQueue = Promise.resolve();
 let warnedAboutIncompatibleProjects = false;
@@ -54,7 +53,7 @@ async function readProjects(): Promise<Project[]> {
 }
 
 async function writeProjects(projects: Project[]): Promise<void> {
-  await fs.mkdir(dataDirectory, { recursive: true });
+  await fs.mkdir(dataDirectory(), { recursive: true });
   const { incompatible } = await readProjectRecords();
   const temporaryFile = `${projectsFile}.${randomUUID()}.tmp`;
   await fs.writeFile(
@@ -75,11 +74,13 @@ function serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export async function listProjects(): Promise<Project[]> {
-  return (await readProjects()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const projects = await Promise.all((await readProjects()).map(hydrateRenderJobs));
+  return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
-  return (await readProjects()).find((project) => project.id === id);
+  const project = (await readProjects()).find((item) => item.id === id);
+  return project ? hydrateRenderJobs(project) : undefined;
 }
 
 export async function createProject(input: ProjectInput): Promise<Project> {
@@ -109,7 +110,8 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 
 export async function updateProject(
   id: string,
-  update: (project: Project) => Project,
+  update: (project: Project) => Project | Promise<Project>,
+  options: { beforeCommit?: (project: Project) => Promise<void> } = {},
 ): Promise<Project> {
   return serializeWrite(async () => {
     const projects = await readProjects();
@@ -118,9 +120,10 @@ export async function updateProject(
       throw new Error("Project not found");
     }
     const next = projectSchema.parse({
-      ...update(structuredClone(projects[index])),
+      ...(await update(structuredClone(projects[index]))),
       updatedAt: new Date().toISOString(),
     });
+    await options.beforeCommit?.(next);
     projects[index] = next;
     await writeProjects(projects);
     return next;

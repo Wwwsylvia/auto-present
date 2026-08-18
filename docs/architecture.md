@@ -1,13 +1,16 @@
 # Architecture
 
+Idea2Impact is intentionally a **localhost-only, single-machine system**. “Production build” in this repository means an optimized local Next.js build started with `npm start`; it does not mean a hosted deployment.
+
 ## Runtime boundaries
 
-- **Next.js web application:** project workflow, editor, API routes, validation, and local orchestration.
-- **Microsoft Foundry:** strategy, draft, and critic-refinement inference for initial generation, plus contextual typed patches. `DefaultAzureCredential` keeps credentials server-side.
-- **GitHub:** bounded public metadata and ranked README, documentation, manifest, deployment, entry-point, route, schema, and test evidence. Repository content is untrusted data and is never inserted into system instructions.
-- **Azure AI Speech:** per-slide narration audio.
-- **FFmpeg:** deterministic slide composition, optional demo footage, audio, captions, and MP4 encoding.
-- **Persistence:** atomic JSON snapshots and file assets for this single-user MVP. Set `IDEA2IMPACT_DATA_DIR` to a mounted Azure Files volume in Container Apps.
+- **Loopback-only Next.js web application:** project workflow, editor, API routes, validation, and durable job enqueueing. It binds only to `127.0.0.1`.
+- **Microsoft Foundry:** model inference for initial generation and contextual typed patches. `DefaultAzureCredential` keeps credentials server-side.
+- **GitHub:** bounded public metadata and selected manifest/README evidence. Repository content is untrusted data and is never inserted into system instructions.
+- **Azure AI Speech:** outbound, server-side per-slide narration using passwordless Azure CLI identity by default.
+- **Local render worker:** a separate process atomically claims durable jobs with a unique lease token, synthesizes narration, invokes FFmpeg, and persists progress. Every heartbeat and terminal transition must present the current token. Transient failures receive three bounded attempts before manual retry.
+- **FFmpeg/FFprobe:** deterministic slide composition, validated optional demo footage, audio, sentence-level captions, MP4 encoding, and media verification.
+- **Persistence:** atomic JSON snapshots, durable queue records, and local file assets for this single-user MVP under `IDEA2IMPACT_DATA_DIR`.
 
 ## Data flow
 
@@ -18,20 +21,21 @@
 5. Deterministic validation checks narrative structure, known evidence, visual variety, text density, repeated claims, narration, demo consistency, and exact duration. Duration allocation uses integer seconds weighted by narration length.
 6. Every direct, AI, regenerated-brief, or restored edit creates an immutable revision. Approval records a specific revision ID. Content changes clear deck approval and mark completed renders stale; navigation alone does not.
 7. Rendering accepts only the currently approved deck revision. Demo upload additionally requires that revision to contain a semantic `demo` layout and `demo` visual.
-8. Browser preview components and MP4 SVG inputs implement the same layout-specific visual model. Speech audio is synthesized per slide at its natural rate. Short audio is padded to preserve exact runtime; measured overruns fail with slide-specific guidance instead of being accelerated. FFmpeg joins the immutable segments.
-9. Editing marks completed render jobs stale.
+8. The API persists a render job in a deferred, non-claimable state while atomically updating project metadata, then activates it only after that metadata is durable.
+9. The local worker atomically claims the job. Browser previews and MP4 SVG inputs implement the same layout-specific visual model. Speech audio is synthesized per slide at its natural rate; short audio is padded and measured overruns fail with slide-specific guidance. FFmpeg joins the immutable segments.
+10. Editing, restoring, regenerating, or replacing a render-affecting asset revokes incompatible claims, marks jobs stale, and removes obsolete output.
 
-## Production topology
+## Local topology
 
-Deploy the standalone Next.js image to Azure Container Apps with a persistent Azure Files mount. For scale, move `renderPresentation` into a Container Apps Job image and have the web application enqueue immutable render job IDs. Store media in Blob Storage and project metadata in PostgreSQL before introducing multiple users.
+Run `npm run dev` for development, or run `npm run build` followed by `npm start` for an optimized local build. Both launch modes supervise the loopback Next.js process and the separate local worker. They coordinate only through the configured local data directory. Azure Foundry and Speech are outbound inference dependencies; the application does not provision resources, deploy containers, create ingress, expose storage URLs, or listen beyond loopback.
 
 ## Security properties
 
 - Foundry and Speech secrets never cross the browser boundary.
+- All data-bearing API routes reject non-loopback request URLs and `Host` headers. Browser mutations and reads also reject non-loopback origins and cross-site requests, preventing DNS-rebinding access to local project data.
 - Public GitHub URLs are restricted to canonical repository roots.
 - GitHub ingestion uses a small allowlist and hard context limit.
-- GitHub tree and content reads are pinned to the discovered commit SHA; excluded generated, binary, oversized, secret-like, and environment files are never selected.
-- Repository excerpts cross an explicit untrusted-data boundary and are never promoted to model instructions.
-- Model responses and patches are schema validated; generated evidence paths must be known.
+- Model responses and patches are schema validated.
 - Render downloads validate UUID-shaped identifiers.
-- Uploads enforce allowed MIME types, a 100 MB limit, and an approved semantic demo slide.
+- Uploads enforce allowed MIME types and a 100 MB limit, then require successful FFprobe validation before atomic promotion.
+- Errors returned to the browser redact credentials, endpoints, and local paths.

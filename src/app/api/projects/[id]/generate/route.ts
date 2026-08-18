@@ -3,12 +3,19 @@ import { generatePresentation } from "@/lib/generate";
 import { inspectPublicRepository } from "@/lib/github";
 import { projectInputSchema } from "@/lib/domain";
 import { invalidateDeckOutputs } from "@/lib/project-state";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 import { getProject, updateProject } from "@/lib/store";
+import {
+  publicErrorResponse,
+  rejectNonLocalMutation,
+} from "@/lib/http";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
   const project = await getProject(id);
   if (!project) {
@@ -36,23 +43,27 @@ export async function POST(
           ? project.repository
           : null;
     const revision = await generatePresentation({ ...project, input: input.data, repository });
-    const updated = await updateProject(id, (current) => {
-      if (
-        body.expectedActiveRevisionId !== undefined &&
-        current.activeRevisionId !== body.expectedActiveRevisionId
-      ) {
-        throw new Error("REVISION_CONFLICT");
-      }
-      return invalidateDeckOutputs({
-        ...current,
-        input: input.data,
-        repository,
-        revisions: [...current.revisions, revision],
-        activeRevisionId: revision.id,
-        approvedPlanRevisionId: revision.id,
-        lastError: null,
-      });
-    });
+    const updated = await updateProject(
+      id,
+      (current) => {
+        if (
+          body.expectedActiveRevisionId !== undefined &&
+          current.activeRevisionId !== body.expectedActiveRevisionId
+        ) {
+          throw new Error("REVISION_CONFLICT");
+        }
+        return invalidateDeckOutputs({
+          ...current,
+          input: input.data,
+          repository,
+          revisions: [...current.revisions, revision],
+          activeRevisionId: revision.id,
+          approvedPlanRevisionId: revision.id,
+          lastError: null,
+        });
+      },
+      { beforeCommit: () => invalidateRenderJobs(id, revision.id) },
+    );
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof Error && error.message === "REVISION_CONFLICT") {
@@ -61,8 +72,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    const message = error instanceof Error ? error.message : "Generation failed";
-    await updateProject(id, (current) => ({ ...current, lastError: message }));
-    return NextResponse.json({ error: message }, { status: 502 });
+    await updateProject(id, (current) => ({
+      ...current,
+      lastError: "Generation failed. Review the error and try again.",
+    }));
+    return publicErrorResponse(error, "Generation failed. Check local service access and try again.", 502);
   }
 }

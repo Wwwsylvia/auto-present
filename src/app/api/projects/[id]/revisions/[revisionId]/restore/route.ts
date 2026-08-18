@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
+import { rejectNonLocalMutation } from "@/lib/http";
 import { restoreProjectRevision } from "@/lib/project-state";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 import { getProject, updateProject } from "@/lib/store";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string; revisionId: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id, revisionId } = await params;
   const project = await getProject(id);
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
@@ -17,8 +21,14 @@ export async function POST(
   }
 
   try {
-    const updated = await updateProject(id, (current) =>
-      restoreProjectRevision(current, revisionId, body.expectedActiveRevisionId!),
+    const updated = await updateProject(
+      id,
+      (current) =>
+        restoreProjectRevision(current, revisionId, body.expectedActiveRevisionId!),
+      {
+        beforeCommit: (next) =>
+          invalidateRenderJobs(id, next.activeRevisionId ?? ""),
+      },
     );
     return NextResponse.json(updated);
   } catch (error) {

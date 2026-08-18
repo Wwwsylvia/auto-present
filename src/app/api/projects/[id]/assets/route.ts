@@ -2,22 +2,40 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { dataDirectory } from "@/lib/config";
 import { activeRevision } from "@/lib/domain";
+import {
+  publicErrorResponse,
+  rejectNonLocalMutation,
+} from "@/lib/http";
+import { probeMedia, validateDemoProbe } from "@/lib/media";
+import { removeFilesBestEffort, runBestEffort } from "@/lib/local-files";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 import { getProject, updateProject } from "@/lib/store";
 
 const maxUploadSize = 100 * 1024 * 1024;
 const allowedTypes = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const extensionsByType = new Map([
+  ["video/mp4", ".mp4"],
+  ["video/webm", ".webm"],
+  ["video/quicktime", ".mov"],
+]);
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
-  const currentProject = await getProject(id);
-  const currentRevision = currentProject && activeRevision(currentProject);
+  const existingProject = await getProject(id);
+  if (!existingProject) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+  const currentRevision = activeRevision(existingProject);
   const hasApprovedDemoSlide = Boolean(
     currentRevision &&
-      currentProject?.approvedDeckRevisionId === currentRevision.id &&
+      existingProject.approvedDeckRevisionId === currentRevision.id &&
       currentRevision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo"),
   );
   if (!hasApprovedDemoSlide) {
@@ -37,23 +55,31 @@ export async function POST(
   if (upload.size <= 0 || upload.size > maxUploadSize) {
     return NextResponse.json({ error: "Demo videos must be under 100 MB" }, { status: 400 });
   }
-  const extension = path.extname(upload.name).toLowerCase() || ".mp4";
+  const extension = extensionsByType.get(upload.type);
+  if (!extension) {
+    return NextResponse.json({ error: "Unsupported demo video type" }, { status: 400 });
+  }
   const assetId = randomUUID();
-  const directory = path.join(process.cwd(), ".data", "uploads", id);
+  const directory = path.join(dataDirectory(), "uploads", id);
   const localPath = path.join(directory, `${assetId}${extension}`);
+  const temporaryPath = path.join(directory, `${assetId}.upload`);
   await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(localPath, Buffer.from(await upload.arrayBuffer()));
-  let replacedPath = "";
+  await fs.writeFile(temporaryPath, Buffer.from(await upload.arrayBuffer()), {
+    flag: "wx",
+  });
+  let project: Awaited<ReturnType<typeof updateProject>>;
   try {
-    const project = await updateProject(id, (current) => {
+    validateDemoProbe(await probeMedia(temporaryPath));
+    await fs.rename(temporaryPath, localPath);
+    project = await updateProject(id, (current) => {
       const revision = activeRevision(current);
-      const stillHasApprovedDemoSlide = Boolean(
-        revision &&
-          current.approvedDeckRevisionId === revision.id &&
-          revision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo"),
-      );
-      if (!stillHasApprovedDemoSlide) throw new Error("DEMO_SLIDE_REQUIRED");
-      replacedPath = current.assets.find((asset) => asset.kind === "demo-video")?.localPath ?? "";
+      if (
+        !revision ||
+        current.approvedDeckRevisionId !== revision.id ||
+        !revision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo")
+      ) {
+        throw new Error("DEMO_SLIDE_REQUIRED");
+      }
       return {
         ...current,
         assets: [
@@ -61,23 +87,23 @@ export async function POST(
           {
             id: assetId,
             kind: "demo-video" as const,
-            name: upload.name,
+            name: path.basename(upload.name).slice(0, 255),
             mimeType: upload.type,
             size: upload.size,
             localPath,
           },
         ],
+        renderJobs: current.renderJobs.map((job) => ({
+          ...job,
+          status: "stale" as const,
+          progress: 0,
+          outputUrl: undefined,
+          error: undefined,
+        })),
       };
     });
-    if (replacedPath && replacedPath !== localPath) {
-      try {
-        await fs.rm(replacedPath, { force: true });
-      } catch (error) {
-        console.error("Could not remove replaced demo clip", error);
-      }
-    }
-    return NextResponse.json(project);
   } catch (error) {
+    await fs.rm(temporaryPath, { force: true });
     await fs.rm(localPath, { force: true });
     if (error instanceof Error && error.message === "DEMO_SLIDE_REQUIRED") {
       return NextResponse.json(
@@ -85,15 +111,26 @@ export async function POST(
         { status: 409 },
       );
     }
-    const message = error instanceof Error ? error.message : "Upload failed";
-    return NextResponse.json({ error: message }, { status: 404 });
+    return publicErrorResponse(error, "Upload validation failed.", 400);
   }
+  await runBestEffort(
+    "Could not invalidate every obsolete render after replacing the demo upload",
+    () => invalidateRenderJobs(id, ""),
+  );
+  await removeFilesBestEffort(
+    existingProject.assets
+      .filter((asset) => asset.kind === "demo-video" && asset.localPath !== localPath)
+      .map((asset) => asset.localPath),
+  );
+  return NextResponse.json(project);
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id } = await params;
   let removedPath = "";
   try {
@@ -102,9 +139,20 @@ export async function DELETE(
       return {
         ...current,
         assets: current.assets.filter((asset) => asset.kind !== "demo-video"),
+        renderJobs: current.renderJobs.map((job) => ({
+          ...job,
+          status: "stale" as const,
+          progress: 0,
+          outputUrl: undefined,
+          error: undefined,
+        })),
       };
     });
-    if (removedPath) await fs.rm(removedPath, { force: true });
+    await runBestEffort(
+      "Could not invalidate every obsolete render after removing the demo upload",
+      () => invalidateRenderJobs(id, ""),
+    );
+    if (removedPath) await removeFilesBestEffort([removedPath]);
     return NextResponse.json(project);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not remove the demo clip";

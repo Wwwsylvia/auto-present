@@ -3,12 +3,16 @@ import { NextResponse } from "next/server";
 import { activeRevision, updateSlideSchema } from "@/lib/domain";
 import { slideCopyFitIssues } from "@/lib/slide-fit";
 import { getProject, updateProject } from "@/lib/store";
+import { rejectNonLocalMutation } from "@/lib/http";
+import { invalidateRenderJobs } from "@/lib/render-queue";
 import { invalidateDeckOutputs } from "@/lib/project-state";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string; slideId: string }> },
 ) {
+  const rejection = rejectNonLocalMutation(request);
+  if (rejection) return rejection;
   const { id, slideId } = await params;
   const parsed = updateSlideSchema.safeParse({
     ...(await request.json()),
@@ -54,14 +58,25 @@ export async function PATCH(
     ),
   };
   try {
-    const updated = await updateProject(id, (current) => {
-      if (current.activeRevisionId !== revision.id) throw new Error("REVISION_CONFLICT");
-      return invalidateDeckOutputs({
-        ...current,
-        revisions: [...current.revisions, nextRevision],
-        activeRevisionId: nextRevision.id,
-      });
-    });
+    const updated = await updateProject(
+      id,
+      (current) => {
+        const currentRevision = activeRevision(current);
+        if (
+          !currentRevision ||
+          currentRevision.id !== revision.id ||
+          currentRevision.version !== parsed.data.expectedVersion
+        ) {
+          throw new Error("REVISION_CONFLICT");
+        }
+        return invalidateDeckOutputs({
+          ...current,
+          revisions: [...current.revisions, nextRevision],
+          activeRevisionId: nextRevision.id,
+        });
+      },
+      { beforeCommit: () => invalidateRenderJobs(id, nextRevision.id) },
+    );
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof Error && error.message === "REVISION_CONFLICT") {

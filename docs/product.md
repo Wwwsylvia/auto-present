@@ -1,5 +1,7 @@
 # Product scope
 
+Idea2Impact is a localhost-based, single-user hackathon MVP. It is not a hosted service and must not be exposed through LAN or public ingress.
+
 ## Promise
 
 Idea2Impact helps a hackathon team turn a lightweight brief into a polished presentation video without becoming a general-purpose presentation editor.
@@ -8,7 +10,7 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 
 1. **Brief:** provide an idea and optional public GitHub URL. Submission discovers bounded repository evidence and generates an evidence-aware deck and narration. A saved brief can be revised and regenerated as a new project revision.
 2. **Review deck:** review slides and narration together, edit fields directly, request a contextual AI revision, or restore a prior revision, then approve the entire active revision.
-3. **Produce video:** after approving a deck with a semantic demo slide, optionally add one demo clip at that slide; render and play a preview, then render and download a narrated final MP4. Explicit back controls and completed stage steps return to earlier stages.
+3. **Produce video:** after approving a deck with a semantic demo slide, optionally add one validated demo clip at that slide; queue a background preview or final render, monitor progress and retries, play or download completed output, and use explicit back controls to return to earlier stages.
 
 ## Acceptance criteria
 
@@ -31,11 +33,9 @@ Idea2Impact helps a hackathon team turn a lightweight brief into a polished pres
 - Final rendering cannot silently omit narration.
 - Current preview/final output is playable in the production workspace; older-revision outputs are labeled stale.
 - The product can generate its own two-minute pitch with an architecture slide, voiceover, captions, and downloadable MP4.
+- The app and worker operate only on localhost and call Azure services outbound from trusted server-side code.
 
 ## Non-goals
 
 Accounts, multi-tenancy, private repositories, PPTX round trips, automatic browser recording, unrestricted slide design, collaboration, and billing are deferred.
-
-## Compatibility
-
-`presentation-v1` saved projects are intentionally incompatible with deck-intelligence v2. Their records remain preserved but are ignored by the v2 workspace; regenerate the project or remove its persisted data. Migration is not provided.
+Deployment, public ingress, public storage URLs, and non-loopback server binding are explicitly outside the hackathon MVP.
