@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { activeRevision } from "@/lib/domain";
 import { generateRevisionPatch } from "@/lib/generate";
 import { getProject, updateProject } from "@/lib/store";
+import { invalidateDeckOutputs } from "@/lib/project-state";
 
 export async function POST(
   request: Request,
@@ -33,18 +34,23 @@ export async function POST(
       source: "foundry" as const,
       slides: revision.slides.map((slide) => ({ ...slide, ...changes.get(slide.id) })),
     };
-    const updated = await updateProject(id, (current) => ({
-      ...current,
-      revisions: [...current.revisions, nextRevision],
-      activeRevisionId: nextRevision.id,
-      approvedDeckRevisionId: null,
-      renderJobs: current.renderJobs.map((job) =>
-        job.status === "complete" ? { ...job, status: "stale" as const } : job,
-      ),
-      lastError: null,
-    }));
+    const updated = await updateProject(id, (current) => {
+      if (current.activeRevisionId !== revision.id) throw new Error("REVISION_CONFLICT");
+      return invalidateDeckOutputs({
+        ...current,
+        revisions: [...current.revisions, nextRevision],
+        activeRevisionId: nextRevision.id,
+        lastError: null,
+      });
+    });
     return NextResponse.json({ project: updated, summary: patch.summary });
   } catch (error) {
+    if (error instanceof Error && error.message === "REVISION_CONFLICT") {
+      return NextResponse.json(
+        { error: "The presentation changed while revising. Review the latest version and try again." },
+        { status: 409 },
+      );
+    }
     const message = error instanceof Error ? error.message : "AI revision failed";
     return NextResponse.json({ error: message }, { status: 502 });
   }

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { generatePresentation } from "@/lib/generate";
 import { inspectPublicRepository } from "@/lib/github";
+import { projectInputSchema } from "@/lib/domain";
+import { invalidateDeckOutputs } from "@/lib/project-state";
 import { getProject, updateProject } from "@/lib/store";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -13,23 +15,52 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
+  const body = (await request.json().catch(() => ({}))) as {
+    input?: unknown;
+    expectedActiveRevisionId?: string | null;
+  };
+  const input = projectInputSchema.safeParse(body.input ?? project.input);
+  if (!input.success) {
+    return NextResponse.json(
+      { error: input.error.issues[0]?.message ?? "Invalid project brief" },
+      { status: 400 },
+    );
+  }
+
   try {
+    const repositoryChanged = input.data.githubUrl !== project.input.githubUrl;
     const repository =
-      project.input.githubUrl && !project.repository
-        ? await inspectPublicRepository(project.input.githubUrl)
-        : project.repository;
-    const revision = await generatePresentation({ ...project, repository });
-    const updated = await updateProject(id, (current) => ({
-      ...current,
-      stage: "create",
-      repository,
-      revisions: [...current.revisions, revision],
-      activeRevisionId: revision.id,
-      approvedPlanRevisionId: revision.id,
-      lastError: null,
-    }));
+      input.data.githubUrl && (repositoryChanged || !project.repository)
+        ? await inspectPublicRepository(input.data.githubUrl)
+        : input.data.githubUrl
+          ? project.repository
+          : null;
+    const revision = await generatePresentation({ ...project, input: input.data, repository });
+    const updated = await updateProject(id, (current) => {
+      if (
+        body.expectedActiveRevisionId !== undefined &&
+        current.activeRevisionId !== body.expectedActiveRevisionId
+      ) {
+        throw new Error("REVISION_CONFLICT");
+      }
+      return invalidateDeckOutputs({
+        ...current,
+        input: input.data,
+        repository,
+        revisions: [...current.revisions, revision],
+        activeRevisionId: revision.id,
+        approvedPlanRevisionId: revision.id,
+        lastError: null,
+      });
+    });
     return NextResponse.json(updated);
   } catch (error) {
+    if (error instanceof Error && error.message === "REVISION_CONFLICT") {
+      return NextResponse.json(
+        { error: "The project changed while regenerating. Review the latest version and try again." },
+        { status: 409 },
+      );
+    }
     const message = error instanceof Error ? error.message : "Generation failed";
     await updateProject(id, (current) => ({ ...current, lastError: message }));
     return NextResponse.json({ error: message }, { status: 502 });

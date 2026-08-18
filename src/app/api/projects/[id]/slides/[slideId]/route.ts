@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { activeRevision, updateSlideSchema } from "@/lib/domain";
 import { slideCopyFitIssues } from "@/lib/slide-fit";
 import { getProject, updateProject } from "@/lib/store";
+import { invalidateDeckOutputs } from "@/lib/project-state";
 
 export async function PATCH(
   request: Request,
@@ -52,14 +53,23 @@ export async function PATCH(
       slide.id === slideId ? { ...slide, ...parsed.data.changes } : slide,
     ),
   };
-  const updated = await updateProject(id, (current) => ({
-    ...current,
-    revisions: [...current.revisions, nextRevision],
-    activeRevisionId: nextRevision.id,
-    approvedDeckRevisionId: null,
-    renderJobs: current.renderJobs.map((job) =>
-      job.status === "complete" ? { ...job, status: "stale" as const } : job,
-    ),
-  }));
-  return NextResponse.json(updated);
+  try {
+    const updated = await updateProject(id, (current) => {
+      if (current.activeRevisionId !== revision.id) throw new Error("REVISION_CONFLICT");
+      return invalidateDeckOutputs({
+        ...current,
+        revisions: [...current.revisions, nextRevision],
+        activeRevisionId: nextRevision.id,
+      });
+    });
+    return NextResponse.json(updated);
+  } catch (error) {
+    if (error instanceof Error && error.message === "REVISION_CONFLICT") {
+      return NextResponse.json(
+        { error: "This presentation changed elsewhere. Refresh before editing." },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ error: "Could not save the slide" }, { status: 500 });
+  }
 }

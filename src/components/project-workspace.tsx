@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import {
   actualDurationSeconds,
   activeRevision,
+  narrationFit,
   type PresentationStrategy,
   type Project,
+  type ProjectInput,
   type Slide,
   type Visual,
 } from "@/lib/domain";
@@ -29,14 +31,34 @@ function hasSemanticDemo(revision: ReturnType<typeof activeRevision>, approvedRe
   );
 }
 
-function StageNav({ stage }: { stage: "brief" | "review" | "produce" }) {
+type WorkspaceStage = "brief" | "review" | "produce";
+
+function StageNav({
+  stage,
+  canReview,
+  canProduce,
+  onNavigate,
+}: {
+  stage: WorkspaceStage;
+  canReview: boolean;
+  canProduce: boolean;
+  onNavigate: (stage: WorkspaceStage) => void;
+}) {
   const activeIndex = stage === "brief" ? 0 : stage === "review" ? 1 : 2;
+  const available = [true, canReview, canProduce];
   return (
     <nav className="stage-nav" aria-label="Presentation workflow">
-      {["Brief", "Review deck", "Produce video"].map((name, index) => (
-        <div className={index <= activeIndex ? "stage-step active" : "stage-step"} key={name}>
+      {(["Brief", "Review deck", "Produce video"] as const).map((name, index) => (
+        <button
+          aria-current={index === activeIndex ? "step" : undefined}
+          className={`${index <= activeIndex ? "stage-step active" : "stage-step"}${index === activeIndex ? " current" : ""}`}
+          disabled={!available[index] || index === activeIndex}
+          key={name}
+          onClick={() => onNavigate(index === 0 ? "brief" : index === 1 ? "review" : "produce")}
+          type="button"
+        >
           <span>{index + 1}</span><strong>{name}</strong>
-        </div>
+        </button>
       ))}
     </nav>
   );
@@ -110,6 +132,43 @@ function VisualEditor({ visual }: { visual: Visual }) {
     case "demo":
       return <fieldset className="visual-editor"><legend>Demo storyboard</legend><label>Setup<textarea defaultValue={visual.setup} name="demo-setup" required rows={2} /></label><label>Action<textarea defaultValue={visual.action} name="demo-action" required rows={2} /></label><label>Payoff<textarea defaultValue={visual.payoff} name="demo-payoff" required rows={2} /></label></fieldset>;
   }
+
+}
+
+function NarrationEditor({ slide }: { slide: Slide }) {
+  const [narration, setNarration] = useState(slide.narration);
+  const [durationSeconds, setDurationSeconds] = useState(slide.durationSeconds);
+  const fit = narrationFit({ narration, durationSeconds });
+  return (
+    <>
+      <label>
+        Narration
+        <textarea
+          name="narration"
+          onChange={(event) => setNarration(event.target.value)}
+          required
+          rows={8}
+          value={narration}
+        />
+        <small className={fit.fits ? "field-help" : "field-help narration-warning"}>
+          {fit.fits
+            ? `${fit.wordCount} of about ${fit.maximumWords} words for natural pacing.`
+            : `${fit.wordCount} words will not fit naturally. Shorten to about ${fit.maximumWords} words or increase duration.`}
+        </small>
+      </label>
+      <label>
+        Duration (seconds)
+        <input
+          max={180}
+          min={3}
+          name="durationSeconds"
+          onChange={(event) => setDurationSeconds(Number(event.target.value))}
+          type="number"
+          value={durationSeconds}
+        />
+      </label>
+    </>
+  );
 }
 
 function formText(formData: FormData, name: string) {
@@ -136,6 +195,9 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const revision = activeRevision(project);
+  const [viewStage, setViewStage] = useState<WorkspaceStage>(
+    initialProject.stage === "produce" ? "produce" : revision ? "review" : "brief",
+  );
   const [selectedId, setSelectedId] = useState(revision?.slides[0]?.id ?? "");
   const [pending, setPending] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -162,12 +224,21 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
     setNotice("");
   }
 
-  async function generate() {
+  async function generate(input?: ProjectInput) {
     setPending("generate"); setError(null);
-    const response = await fetch(`/api/projects/${project.id}/generate`, { method: "POST" });
+    const response = await fetch(`/api/projects/${project.id}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input,
+        expectedActiveRevisionId: input ? project.activeRevisionId : undefined,
+      }),
+    });
     const body = await response.json(); setPending("");
     if (!response.ok) return reportError("generate", body.error ?? "Could not generate the presentation");
-    setProject(body); setSelectedId(body.revisions.at(-1)?.slides[0]?.id ?? ""); router.refresh();
+    setProject(body); setSelectedId(body.revisions.at(-1)?.slides[0]?.id ?? "");
+    setViewStage("review"); setNotice(input ? "Brief updated and a new deck revision was created." : "");
+    router.refresh();
   }
 
   async function approveDeck() {
@@ -176,7 +247,8 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
     const response = await fetch(`/api/projects/${project.id}/approve`, { method: "POST" });
     const body = await response.json(); setPending("");
     if (!response.ok) return reportError("approve", body.error ?? "Could not approve the deck");
-    setProject(body); setNotice("The complete deck and narration are approved."); router.refresh();
+    setProject(body); setViewStage("produce");
+    setNotice("The complete deck and narration are approved."); router.refresh();
   }
 
   async function render(kind: "preview" | "final") {
@@ -228,6 +300,24 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
     setProject(body.project); setDirty(false); setChangeSummary(body.summary); setNotice("AI revision applied."); router.refresh();
   }
 
+  async function restoreRevision(revisionId: string) {
+    if (!revision || revision.id === revisionId) return;
+    if (dirty && !window.confirm("Discard unsaved changes and restore this revision?")) return;
+    setPending("restore"); setError(null);
+    const response = await fetch(
+      `/api/projects/${project.id}/revisions/${revisionId}/restore`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedActiveRevisionId: revision.id }),
+      },
+    );
+    const body = await response.json(); setPending("");
+    if (!response.ok) return reportError("restore", body.error ?? "Could not restore the revision");
+    setProject(body); setSelectedId(body.revisions.at(-1)?.slides[0]?.id ?? "");
+    setDirty(false); setNotice("Revision restored as a new version."); router.refresh();
+  }
+
   async function uploadDemo(formData: FormData) {
     setPending("upload"); setError(null);
     const response = await fetch(`/api/projects/${project.id}/assets`, { method: "POST", body: formData });
@@ -250,17 +340,49 @@ export function ProjectWorkspace({ initialProject }: { initialProject: Project }
     setDirty(false); setError(null); setNotice(""); setSelectedId(id);
   }
 
-  if (!revision) {
-    return <><StageNav stage="brief" /><section className="generation-workspace" aria-live="polite"><h1>Turning your idea into a clear story.</h1>{pending === "generate" && <div className="progress-track"><span /></div>}<p>We&apos;re analyzing the brief, planning the narrative, and creating slides with narration.</p>{!pending && !error && <button className="primary wide" onClick={() => void generate()} type="button">Continue generation <span>→</span></button>}{error?.area === "generate" && <><p className="error" role="alert">{error.message}</p><button className="primary wide" onClick={() => void generate()} type="button">Retry generation <span>→</span></button></>}{!foundryConfigured && <p className="mode-note">Demo mode uses sample-generated content so you can explore the complete workflow.</p>}</section></>;
+  function navigateStage(stage: WorkspaceStage) {
+    if (stage === viewStage) return;
+    if (dirty && !window.confirm("Discard unsaved slide changes and leave this stage?")) return;
+    if (stage === "review" && !revision) return;
+    if (stage === "produce" && project.approvedDeckRevisionId !== revision?.id) return;
+    setDirty(false); setError(null); setNotice(""); setViewStage(stage);
   }
 
-  if (project.stage === "produce") {
+  function inputFromForm(formData: FormData): ProjectInput {
+    return {
+      idea: formText(formData, "idea"),
+      audience: formText(formData, "audience"),
+      tone: formText(formData, "tone") as ProjectInput["tone"],
+      durationMinutes: Number(formData.get("durationMinutes")),
+      githubUrl: formText(formData, "githubUrl"),
+    };
+  }
+
+  const stageNav = (
+    <StageNav
+      canProduce={project.approvedDeckRevisionId === revision?.id}
+      canReview={Boolean(revision)}
+      onNavigate={navigateStage}
+      stage={viewStage}
+    />
+  );
+
+  if (viewStage === "brief" && revision) {
+    return <>{stageNav}<main className="brief-edit-workspace"><header className="brief-edit-heading"><div><div className="eyebrow">Edit brief</div><h1>Change the story at its source.</h1><p>Regenerating creates a new revision. Your current deck remains available if generation fails.</p></div><button className="secondary back-button" onClick={() => navigateStage("review")} type="button">← Back to deck</button></header><form action={(formData) => void generate(inputFromForm(formData))} className="brief-card brief-edit-form"><label>What are you building?<textarea defaultValue={project.input.idea} minLength={20} name="idea" required rows={5} /></label><div className="form-grid"><label>Audience<input defaultValue={project.input.audience} name="audience" required /></label><label>Tone<select defaultValue={project.input.tone} name="tone"><option value="confident">Confident</option><option value="conversational">Conversational</option><option value="technical">Technical</option><option value="inspiring">Inspiring</option></select></label></div><label>Target duration (minutes)<input defaultValue={project.input.durationMinutes} max={10} min={1} name="durationMinutes" required type="number" /></label><label>Public GitHub repository <span className="optional">Optional</span><input defaultValue={project.input.githubUrl} name="githubUrl" type="url" /></label>{error?.area === "generate" && <p className="error" role="alert">{error.message}</p>}<button className="primary" disabled={pending === "generate"} type="submit">{pending === "generate" ? "Regenerating deck..." : "Save brief & regenerate deck"}<span>→</span></button></form></main></>;
+  }
+
+  if (!revision) {
+    return <>{stageNav}<section className="generation-workspace" aria-live="polite"><h1>Turning your idea into a clear story.</h1>{pending === "generate" && <div className="progress-track"><span /></div>}<p>We&apos;re analyzing the brief, planning the narrative, and creating slides with narration.</p>{!pending && !error && <button className="primary wide" onClick={() => void generate()} type="button">Continue generation <span>→</span></button>}{error?.area === "generate" && <><p className="error" role="alert">{error.message}</p><button className="primary wide" onClick={() => void generate()} type="button">Retry generation <span>→</span></button></>}{!foundryConfigured && <p className="mode-note">Demo mode uses sample-generated content so you can explore the complete workflow.</p>}</section></>;
+  }
+
+  if (viewStage === "produce") {
     const demoSlide = revision.slides.find((slide) => slide.layout === "demo" && slide.visual.type === "demo");
     const canUseDemo = hasSemanticDemo(revision, project.approvedDeckRevisionId);
     const demo = project.assets.find((asset) => asset.kind === "demo-video");
     const activeJobs = project.renderJobs.filter((job) => job.status === "queued" || job.status === "rendering");
-    return <><StageNav stage="produce" /><main className="production-workspace"><header className="production-heading"><div><h1>Bring the approved story to life.</h1></div><div className="approved-badge">✓ Deck approved</div></header>{notice && <p className="success" role="status">{notice}</p>}<div className="production-grid"><section className="production-panel">{canUseDemo && demoSlide?.visual.type === "demo" ? <><h2>Demo moment</h2><p className="demo-guidance">The clip supports this slide&apos;s promised proof. Keep the voiceover focused on the audience outcome—not controls.</p><dl className="demo-plan"><div><dt>Setup</dt><dd>{demoSlide.visual.setup}</dd></div><div><dt>Action</dt><dd>{demoSlide.visual.action}</dd></div><div><dt>Payoff</dt><dd>{demoSlide.visual.payoff}</dd></div></dl><p className="field-help">MP4, WebM, or QuickTime · maximum 100 MB</p>{demo ? <div className="asset-summary"><div><strong>{demo.name}</strong><small>{(demo.size / 1024 / 1024).toFixed(1)} MB</small></div><button className="text-button" disabled={Boolean(pending)} onClick={() => void removeDemo()} type="button">{pending === "remove" ? "Removing..." : "Remove"}</button></div> : null}<form action={uploadDemo} className="asset-upload"><input accept="video/mp4,video/webm,video/quicktime" name="file" required type="file" /><button className="secondary" disabled={Boolean(pending)} type="submit">{pending === "upload" ? "Uploading..." : demo ? "Replace demo clip" : "Upload demo clip"}</button></form></> : <><h2>No demo clip for this deck</h2><p>This approved deck does not contain a semantic demo slide, so a video upload would not have a defined story moment.</p><p className="demo-guidance">{revision.strategy.demoPlan.rationale}</p></>}{error?.area === "upload" && <p className="error" role="alert">{error.message}</p>}</section><section className="production-panel production-render"><h2>Render and download</h2><p>Render a quick preview first, then create the narrated final MP4 when it looks right.</p><div className="render-actions"><button className="secondary" disabled={Boolean(pending)} onClick={() => void render("preview")}>{pending === "render-preview" ? "Rendering preview..." : "Render preview"}</button><button className="primary" disabled={Boolean(pending)} onClick={() => void render("final")}>{pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span></button></div>{(pending.startsWith("render-") || activeJobs.length > 0) && <div className="render-progress" role="status"><div className="progress-track"><span /></div><strong>Rendering video</strong><p>This can take a few minutes. Keep this page open.</p></div>}{error?.area === "render" && <p className="error" role="alert">{error.message}</p>}<div className="render-list">{project.renderJobs.map((job) => <div className={`render-result status-${job.status}`} key={job.id}><span>{job.kind} · {job.status}</span>{job.outputUrl && <a href={job.outputUrl}>Download MP4 ↓</a>}{job.error && <small>{job.error}</small>}</div>)}</div></section></div></main></>;
+    const latestVideo = project.renderJobs.findLast((job) => job.revisionId === revision.id && job.status === "complete" && job.outputUrl);
+    return <>{stageNav}<main className="production-workspace"><header className="production-heading"><div><button className="text-button back-link" onClick={() => navigateStage("review")} type="button">← Back to deck</button><h1>Bring the approved story to life.</h1></div><div className="production-heading-actions"><button className="secondary" onClick={() => navigateStage("brief")} type="button">Edit brief</button><button className="secondary" onClick={() => navigateStage("review")} type="button">Edit deck</button><div className="approved-badge">✓ Deck approved</div></div></header>{notice && <p className="success" role="status">{notice}</p>}<div className="production-grid"><section className="production-panel">{canUseDemo && demoSlide?.visual.type === "demo" ? <><h2>Demo moment</h2><p className="demo-guidance">The clip supports this slide&apos;s promised proof. Keep the voiceover focused on the audience outcome—not controls.</p><dl className="demo-plan"><div><dt>Setup</dt><dd>{demoSlide.visual.setup}</dd></div><div><dt>Action</dt><dd>{demoSlide.visual.action}</dd></div><div><dt>Payoff</dt><dd>{demoSlide.visual.payoff}</dd></div></dl><p className="field-help">MP4, WebM, or QuickTime · maximum 100 MB</p>{demo ? <div className="asset-summary"><div><strong>{demo.name}</strong><small>{(demo.size / 1024 / 1024).toFixed(1)} MB</small></div><button className="text-button" disabled={Boolean(pending)} onClick={() => void removeDemo()} type="button">{pending === "remove" ? "Removing..." : "Remove"}</button></div> : null}<form action={uploadDemo} className="asset-upload"><input accept="video/mp4,video/webm,video/quicktime" name="file" required type="file" /><button className="secondary" disabled={Boolean(pending)} type="submit">{pending === "upload" ? "Uploading..." : demo ? "Replace demo clip" : "Upload demo clip"}</button></form></> : <><h2>No demo clip for this deck</h2><p>This approved deck does not contain a semantic demo slide, so a video upload would not have a defined story moment.</p><p className="demo-guidance">{revision.strategy.demoPlan.rationale}</p></>}{error?.area === "upload" && <p className="error" role="alert">{error.message}</p>}</section><section className="production-panel production-render"><h2>Render and review</h2><p>Render a quick preview first, then create the narrated final MP4 when it looks right.</p>{latestVideo?.outputUrl && <video className="video-preview" controls key={latestVideo.id} preload="metadata" src={latestVideo.outputUrl}>Your browser does not support video playback.</video>}<div className="render-actions"><button className="secondary" disabled={Boolean(pending)} onClick={() => void render("preview")}>{pending === "render-preview" ? "Rendering preview..." : "Render preview"}</button><button className="primary" disabled={Boolean(pending)} onClick={() => void render("final")}>{pending === "render-final" ? "Rendering final..." : "Render final MP4"}<span>→</span></button></div>{(pending.startsWith("render-") || activeJobs.length > 0) && <div className="render-progress" role="status"><div className="progress-track"><span /></div><strong>Rendering video</strong><p>This can take a few minutes. Keep this page open.</p></div>}{error?.area === "render" && <p className="error" role="alert">{error.message}</p>}<div className="render-list">{project.renderJobs.map((job) => <div className={`render-result status-${job.status}`} key={job.id}><span>{job.kind} · {job.status}{job.status === "stale" ? " · older deck" : ""}</span>{job.outputUrl && <a href={job.outputUrl}>Download MP4 ↓</a>}{job.error && <small>{job.error}</small>}</div>)}</div></section></div></main></>;
   }
 
-  return <><StageNav stage="review" /><section className="approval-bar"><div><strong>Review the entire deck</strong><span>Approval includes all slides and narration, not only the selected slide.</span></div><button className="primary" disabled={Boolean(pending)} onClick={() => void approveDeck()} type="button">{pending === "approve" ? "Approving deck..." : "Approve entire deck & continue to video"}<span>→</span></button>{error?.area === "approve" && <p className="error" role="alert">{error.message}</p>}</section>{notice && <p className="workspace-notice success" role="status">{notice}</p>}<section className="workspace review-workspace"><aside className="slide-list"><div className="panel-heading"><span>{revision.slides.length} slides</span><span>{formatTime(total)}</span></div>{revision.slides.map((slide, index) => <button className={slide.id === selected?.id ? "thumbnail selected" : "thumbnail"} key={slide.id} onClick={() => selectSlide(slide.id)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{slide.title}</strong><small>{slide.layout} · {slide.visual.type}</small></div><time>{formatTime(slide.durationSeconds)}</time></button>)}</aside><div className="preview-panel"><div className="preview-toolbar"><div><span className={`source source-${revision.source}`}>{revision.source === "demo" ? "Demo content" : "AI generated"}</span>Revision {revision.version}</div><div className={Math.abs(durationStatus) > 10 ? "duration-warning" : "duration-ok"}>{formatTime(total)} / {formatTime(target)} target</div></div>{selected && <SlidePreview slide={selected} />}<div className="slide-intent"><div><span>Audience takeaway</span><p>{selected?.audienceTakeaway}</p></div><div><span>Visual intent</span><p>{selected && visualLabel(selected.visual)} — the on-screen structure is designed to make this slide&apos;s point scannable before the narration adds context.</p></div></div><div className="narration-preview"><strong>Voiceover</strong><p>{selected?.narration}</p></div><StrategyPanel strategy={revision.strategy} /></div>{selected && <aside className="properties-panel" key={`${revision.id}-${selected.id}`}><form action={saveSlide} className="edit-slide-form" onChange={() => setDirty(true)}><div className="panel-heading"><strong>Edit slide</strong><span>{selected.layout} · {selected.visual.type}</span></div><label>Title<input name="title" defaultValue={selected.title} required /></label><label>Purpose<input name="purpose" defaultValue={selected.purpose} required /><small className="field-help">The role this slide plays in your story.</small></label><label>Audience takeaway<textarea name="audienceTakeaway" defaultValue={selected.audienceTakeaway} required rows={3} /></label><label>Key points<textarea name="bullets" rows={5} defaultValue={selected.bullets.join("\n")} /><small className="field-help">Each line becomes one bullet.</small></label><VisualEditor visual={selected.visual} /><label>Narration<textarea name="narration" rows={8} defaultValue={selected.narration} required /><small className="field-help">Aim for roughly two spoken words per second.</small></label><label>Duration (seconds)<input min={3} max={180} name="durationSeconds" type="number" defaultValue={selected.durationSeconds} /></label>{dirty && <p className="unsaved-note" role="status">Unsaved changes</p>}{error?.area === "save" && <p className="error" role="alert">{error.message}</p>}<button className="secondary" disabled={pending === "save" || !dirty} type="submit">{pending === "save" ? "Saving..." : "Save slide changes"}</button></form><div className="copilot-divider"><span>or request a revision</span></div><div className="copilot-box"><div><span className="copilot-spark">✦</span><strong>Contextual revision</strong></div>{foundryConfigured ? <><p>Describe the outcome you want. Changes are validated before being saved.</p><form action={revise}><textarea name="instruction" rows={3} placeholder="Make the architecture slide more technical..." /><button className="secondary" disabled={pending === "revise"} type="submit">{pending === "revise" ? "Applying..." : "Apply AI revision"}</button></form></> : <p>AI revisions are unavailable in demo mode. Edit the slide fields directly instead.</p>}{error?.area === "revise" && <p className="error" role="alert">{error.message}</p>}{changeSummary && <p className="change-summary">{changeSummary}</p>}</div></aside>}</section></>;
+  return <>{stageNav}<section className="approval-bar"><button className="secondary back-button" onClick={() => navigateStage("brief")} type="button">← Back to brief</button><div><strong>Review the entire deck</strong><span>Approval includes all slides and narration, not only the selected slide.</span></div><button className="primary" disabled={Boolean(pending)} onClick={() => void approveDeck()} type="button">{pending === "approve" ? "Approving deck..." : "Approve entire deck & continue to video"}<span>→</span></button>{error?.area === "approve" && <p className="error" role="alert">{error.message}</p>}</section>{notice && <p className="workspace-notice success" role="status">{notice}</p>}<section className="workspace review-workspace"><aside className="slide-list"><div className="panel-heading"><span>{revision.slides.length} slides</span><span>{formatTime(total)}</span></div>{revision.slides.map((slide, index) => <button className={slide.id === selected?.id ? "thumbnail selected" : "thumbnail"} key={slide.id} onClick={() => selectSlide(slide.id)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{slide.title}</strong><small>{slide.layout} · {slide.visual.type}</small></div><time>{formatTime(slide.durationSeconds)}</time></button>)}</aside><div className="preview-panel"><div className="preview-toolbar"><div><span className={`source source-${revision.source}`}>{revision.source === "demo" ? "Demo content" : "AI generated"}</span>Revision {revision.version}</div><div className={Math.abs(durationStatus) > 10 ? "duration-warning" : "duration-ok"}>{formatTime(total)} / {formatTime(target)} target</div></div>{selected && <SlidePreview slide={selected} />}<div className="slide-intent"><div><span>Audience takeaway</span><p>{selected?.audienceTakeaway}</p></div><div><span>Visual intent</span><p>{selected && visualLabel(selected.visual)} — the on-screen structure is designed to make this slide&apos;s point scannable before the narration adds context.</p></div></div><div className="narration-preview"><strong>Voiceover</strong><p>{selected?.narration}</p></div><StrategyPanel strategy={revision.strategy} /><section className="revision-history"><div className="panel-heading"><strong>Revision history</strong><span>{project.revisions.length} versions</span></div>{project.revisions.toReversed().map((item) => <div className={item.id === revision.id ? "revision-row current" : "revision-row"} key={item.id}><div><strong>Revision {item.version}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.source === "demo" ? "Demo" : "AI"}</small></div><button className="text-button" disabled={Boolean(pending) || item.id === revision.id} onClick={() => void restoreRevision(item.id)} type="button">{item.id === revision.id ? "Current" : "Restore"}</button></div>)}{error?.area === "restore" && <p className="error" role="alert">{error.message}</p>}</section></div>{selected && <aside className="properties-panel" key={`${revision.id}-${selected.id}`}><form action={saveSlide} className="edit-slide-form" onChange={() => setDirty(true)}><div className="panel-heading"><strong>Edit slide</strong><span>{selected.layout} · {selected.visual.type}</span></div><label>Title<input name="title" defaultValue={selected.title} required /></label><label>Purpose<input name="purpose" defaultValue={selected.purpose} required /><small className="field-help">The role this slide plays in your story.</small></label><label>Audience takeaway<textarea name="audienceTakeaway" defaultValue={selected.audienceTakeaway} required rows={3} /></label><label>Key points<textarea name="bullets" rows={5} defaultValue={selected.bullets.join("\n")} /><small className="field-help">Each line becomes one bullet.</small></label><VisualEditor visual={selected.visual} /><NarrationEditor slide={selected} />{dirty && <p className="unsaved-note" role="status">Unsaved changes</p>}{error?.area === "save" && <p className="error" role="alert">{error.message}</p>}<button className="secondary" disabled={pending === "save" || !dirty} type="submit">{pending === "save" ? "Saving..." : "Save slide changes"}</button></form><div className="copilot-divider"><span>or request a revision</span></div><div className="copilot-box"><div><span className="copilot-spark">✦</span><strong>Contextual revision</strong></div>{foundryConfigured ? <><p>Describe the outcome you want. Changes are validated before being saved.</p><form action={revise}><textarea name="instruction" rows={3} placeholder="Make the architecture slide more technical..." /><button className="secondary" disabled={pending === "revise"} type="submit">{pending === "revise" ? "Applying..." : "Apply AI revision"}</button></form></> : <p>AI revisions are unavailable in demo mode. Edit the slide fields directly instead.</p>}{error?.area === "revise" && <p className="error" role="alert">{error.message}</p>}{changeSummary && <p className="change-summary">{changeSummary}</p>}</div></aside>}</section></>;
 }

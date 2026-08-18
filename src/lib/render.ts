@@ -303,19 +303,10 @@ export function audioTimingFilter(inputSeconds: number, targetSeconds: number): 
   if (!(inputSeconds > 0) || !(targetSeconds > 0)) {
     throw new Error("Audio timing requires positive input and target durations");
   }
-  let ratio = inputSeconds / targetSeconds;
-  const filters: string[] = [];
-  while (ratio > 2) {
-    filters.push("atempo=2");
-    ratio /= 2;
+  if (inputSeconds > targetSeconds + 0.25) {
+    throw new Error("Natural voiceover is longer than the slide duration");
   }
-  while (ratio < 0.5) {
-    filters.push("atempo=0.5");
-    ratio /= 0.5;
-  }
-  if (Math.abs(ratio - 1) > 0.001) filters.push(`atempo=${ratio.toFixed(6)}`);
-  filters.push(`apad`, `atrim=duration=${targetSeconds}`);
-  return filters.join(",");
+  return `apad,atrim=duration=${targetSeconds}`;
 }
 
 async function synthesize(text: string, outputFile: string): Promise<void> {
@@ -409,6 +400,11 @@ export async function renderPresentation(
       const audio = `audio-${index}.wav`;
       await synthesize(slide.narration, path.join(jobDirectory, audio));
       const audioDuration = await probeDuration(audio, jobDirectory);
+      if (audioDuration > duration + 0.25) {
+        throw new Error(
+          `Voiceover for "${slide.title}" is ${audioDuration.toFixed(1)}s but the slide is ${duration}s. Shorten the narration or increase the slide duration.`,
+        );
+      }
       renderedDuration = duration;
       await run(
         "ffmpeg",

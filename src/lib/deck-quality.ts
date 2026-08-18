@@ -1,5 +1,6 @@
 import {
   actualDurationSeconds,
+  narrationFit,
   type PresentationStrategy,
   type Slide,
   type Visual,
@@ -13,6 +14,7 @@ export type DeckQualityCheckName =
   | "text-density"
   | "repeated-claims"
   | "narration"
+  | "narration-fit"
   | "demo-consistency"
   | "exact-duration";
 
@@ -140,6 +142,7 @@ export function evaluateDeckQuality(
     containsMouseActionNarration(slide.narration),
   );
   const narrationValid = missingNarration.length === 0 && mouseActionNarration.length === 0;
+  const narrationOverruns = slides.filter((slide) => !narrationFit(slide).fits);
 
   const checks: DeckQualityCheck[] = [
     check(
@@ -188,6 +191,15 @@ export function evaluateDeckQuality(
               ? `Mouse-action narration: ${mouseActionNarration.map((slide) => slide.title).join(", ")}.`
               : "",
           ].filter(Boolean).join(" "),
+    ),
+    check(
+      "narration-fit",
+      narrationOverruns.length === 0,
+      narrationOverruns.length === 0
+        ? "Every voiceover fits its slide at a natural speaking rate."
+        : `Shorten narration or increase duration for: ${narrationOverruns
+            .map((slide) => slide.title)
+            .join(", ")}.`,
     ),
     check(
       "demo-consistency",

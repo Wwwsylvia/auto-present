@@ -98,10 +98,10 @@ test("rejects an uploaded demo asset when the approved deck has no semantic demo
   assert.equal(resolveDemoFootageIndex(slides, false), undefined);
 });
 
-test("builds bounded audio timing filters for short and long narration", () => {
+test("preserves natural audio speed and rejects narration overruns", () => {
   assert.equal(audioTimingFilter(20, 20), "apad,atrim=duration=20");
-  assert.match(audioTimingFilter(50, 20), /^atempo=2,atempo=1\.250000,/);
-  assert.match(audioTimingFilter(5, 20), /^atempo=0\.5,atempo=0\.500000,/);
+  assert.equal(audioTimingFilter(5, 20), "apad,atrim=duration=20");
+  assert.throws(() => audioTimingFilter(21, 20), /longer than the slide duration/);
 });
 
 test("bounds unbroken schema-valid text inside SVG text regions", () => {

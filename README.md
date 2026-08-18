@@ -9,13 +9,15 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 - Microsoft Foundry-backed deck intelligence: strategy, draft, and critic-refinement passes
 - Persisted audience strategy, proof-point, demo-plan, layout, and structured visual data
 - Deterministic demo generation when Foundry is not configured
-- Three-step Brief → Review deck → Produce video workflow with one whole-deck approval
+- Reversible Brief → Review deck → Produce video workflow with explicit back controls and one whole-deck approval
 - Revision-safe direct slide and narration editing
+- Brief regeneration and prior-revision restore without losing project history
 - Contextual Foundry revisions expressed as validated typed patches
 - Semantic demo recommendations with setup, action, and payoff; uploads require an approved semantic demo slide
-- Azure AI Speech narration and FFmpeg-rendered captions
+- Natural-rate Azure AI Speech narration and FFmpeg-rendered captions
 - Silent low-quality preview in local demo mode and narrated final MP4 with Azure Speech
 - Layout-specific browser and MP4 rendering, plus deterministic quality and exact-duration checks
+- In-page playback for the latest current-revision preview or final video
 
 ## Requirements
 
