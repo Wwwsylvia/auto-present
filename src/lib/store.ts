@@ -111,6 +111,7 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 export async function updateProject(
   id: string,
   update: (project: Project) => Project | Promise<Project>,
+  options: { beforeCommit?: (project: Project) => Promise<void> } = {},
 ): Promise<Project> {
   return serializeWrite(async () => {
     const projects = await readProjects();
@@ -122,6 +123,7 @@ export async function updateProject(
       ...(await update(structuredClone(projects[index]))),
       updatedAt: new Date().toISOString(),
     });
+    await options.beforeCommit?.(next);
     projects[index] = next;
     await writeProjects(projects);
     return next;

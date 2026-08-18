@@ -60,6 +60,7 @@ test("returns typed quality checks for a valid deck", async () => {
       "text-density",
       "repeated-claims",
       "narration",
+      "narration-fit",
       "demo-consistency",
       "exact-duration",
     ],
@@ -82,7 +83,12 @@ test("reports each deterministic quality failure without model access", async ()
       audienceTakeaway: index === 0 ? denseText : slide.audienceTakeaway,
       layout: index === 0 ? ("solution" as const) : slide.layout,
       visual: { type: "statement" as const, statement: "Same visual treatment" },
-      narration: index === 1 ? "" : slide.narration,
+      narration:
+        index === 1
+          ? ""
+          : index === 2
+            ? Array.from({ length: 80 }, () => "word").join(" ")
+            : slide.narration,
       durationSeconds: index === 0 ? slide.durationSeconds + 3 : slide.durationSeconds,
       evidencePaths: index === 2 ? ["unknown.md"] : slide.evidencePaths,
     })),
@@ -101,9 +107,28 @@ test("reports each deterministic quality failure without model access", async ()
     "text-density",
     "repeated-claims",
     "narration",
+    "narration-fit",
     "demo-consistency",
     "exact-duration",
   ]));
+});
+
+test("rejects narration that would require accelerated speech", async () => {
+  const revision = await generatePresentation(project());
+  const edited = {
+    ...revision,
+    slides: revision.slides.map((slide, index) => ({
+      ...slide,
+      narration: index === 0 ? Array.from({ length: 80 }, () => "word").join(" ") : slide.narration,
+    })),
+  };
+
+  const quality = evaluateDeckQuality(edited, {
+    targetDurationSeconds: 60,
+    knownEvidencePaths: ["README.md"],
+  });
+
+  assert.equal(quality.checks.find((check) => check.name === "narration-fit")?.passed, false);
 });
 
 test("rejects mouse-action narration from direct edits", async () => {

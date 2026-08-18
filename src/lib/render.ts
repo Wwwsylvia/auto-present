@@ -300,19 +300,10 @@ export function audioTimingFilter(inputSeconds: number, targetSeconds: number): 
   if (!(inputSeconds > 0) || !(targetSeconds > 0)) {
     throw new Error("Audio timing requires positive input and target durations");
   }
-  let ratio = inputSeconds / targetSeconds;
-  const filters: string[] = [];
-  while (ratio > 2) {
-    filters.push("atempo=2");
-    ratio /= 2;
+  if (inputSeconds > targetSeconds + 0.25) {
+    throw new Error("Natural voiceover is longer than the slide duration");
   }
-  while (ratio < 0.5) {
-    filters.push("atempo=0.5");
-    ratio /= 0.5;
-  }
-  if (Math.abs(ratio - 1) > 0.001) filters.push(`atempo=${ratio.toFixed(6)}`);
-  filters.push(`apad`, `atrim=duration=${targetSeconds}`);
-  return filters.join(",");
+  return `apad,atrim=duration=${targetSeconds}`;
 }
 function srtTimestamp(seconds: number): string {
   const milliseconds = Math.round(seconds * 1000);
@@ -373,7 +364,11 @@ export async function renderPresentation(
         path.join(jobDirectory, rawAudio),
       );
       const speechDuration = await probeDuration(rawAudio, jobDirectory);
-      const audioFilter = audioTimingFilter(speechDuration, duration);
+      if (speechDuration > duration + 0.25) {
+        throw new Error(
+          `Voiceover for "${slide.title}" is ${speechDuration.toFixed(1)}s but the slide is ${duration}s. Shorten the narration or increase the slide duration.`,
+        );
+      }
       await run(
         "ffmpeg",
         [
@@ -381,7 +376,7 @@ export async function renderPresentation(
           "-i",
           rawAudio,
           "-af",
-          audioFilter,
+          `apad,atrim=duration=${duration}`,
           "-t",
           String(duration),
           audio,

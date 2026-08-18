@@ -15,13 +15,15 @@ Idea2Impact is intentionally a **localhost-only, single-machine system**. “Pro
 ## Data flow
 
 1. The brief is validated with Zod and persisted.
-2. Optional GitHub evidence is normalized, bounded to 24,000 characters, and stored with commit identity.
-3. Foundry receives the brief and bounded evidence and returns JSON that must satisfy the presentation schema.
-4. Every direct or AI edit creates an immutable revision. Approval records a specific revision ID.
-5. Rendering accepts only the currently approved deck revision.
-6. The API persists an immutable render job in a deferred, non-claimable state while atomically updating project metadata. It activates the job only after that metadata is durable, and removes the deferred record if project persistence fails.
-7. The local worker atomically claims the job. Slide visuals and sentence-level captions are generated deterministically, Speech audio is synthesized per slide, and FFmpeg joins the immutable segments.
-8. Editing or replacing a render-affecting asset atomically revokes incompatible claims, marks those jobs stale, and removes obsolete output. A revoked worker cannot subsequently complete, fail, or retry that job.
+2. Optional GitHub discovery resolves the default-branch head SHA, selects a bounded allowlisted file set from that exact SHA's tree, and fetches excerpts at the same SHA. Excerpts are bounded to 24,000 characters and stored with their commit identity.
+3. Foundry receives the brief and bounded evidence as explicitly untrusted user-context data. It runs strategy, draft, then critic refinement; each structured response is schema validated, with at most one retry for an invalid response per pass.
+4. The persisted revision contains an audience strategy (message, problem, solution, differentiators, proof points, narrative arc, voiceover direction, and demo recommendation) and layout-specific structured visuals.
+5. Deterministic validation checks narrative structure, known evidence, visual variety, text density, repeated claims, narration, demo consistency, and exact duration. Duration allocation uses integer seconds weighted by narration length.
+6. Every direct, AI, regenerated-brief, or restored edit creates an immutable revision. Approval records a specific revision ID. Content changes clear deck approval and mark completed renders stale; navigation alone does not.
+7. Rendering accepts only the currently approved deck revision. Demo upload additionally requires that revision to contain a semantic `demo` layout and `demo` visual.
+8. The API persists a render job in a deferred, non-claimable state while atomically updating project metadata, then activates it only after that metadata is durable.
+9. The local worker atomically claims the job. Browser previews and MP4 SVG inputs implement the same layout-specific visual model. Speech audio is synthesized per slide at its natural rate; short audio is padded and measured overruns fail with slide-specific guidance. FFmpeg joins the immutable segments.
+10. Editing, restoring, regenerating, or replacing a render-affecting asset revokes incompatible claims, marks jobs stale, and removes obsolete output.
 
 ## Local topology
 

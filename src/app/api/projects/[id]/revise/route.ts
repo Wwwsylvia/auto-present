@@ -13,6 +13,7 @@ import {
   rejectNonLocalMutation,
 } from "@/lib/http";
 import { invalidateRenderJobs } from "@/lib/render-queue";
+import { invalidateDeckOutputs } from "@/lib/project-state";
 
 export async function POST(
   request: Request,
@@ -55,30 +56,29 @@ export async function POST(
         502,
       );
     }
-    const updated = await updateProject(id, (current) => {
-      const currentRevision = activeRevision(current);
-      if (
-        !currentRevision ||
-        currentRevision.id !== revision.id ||
-        currentRevision.version !== body.expectedVersion
-      ) {
-        throw new PublicError(
-          "The presentation changed while the revision was generated. Refresh and try again.",
-          409,
-        );
-      }
-      return {
-        ...current,
-        revisions: [...current.revisions, nextRevision],
-        activeRevisionId: nextRevision.id,
-        approvedDeckRevisionId: null,
-        renderJobs: current.renderJobs.map((job) =>
-          job.status === "complete" ? { ...job, status: "stale" as const } : job,
-        ),
-        lastError: null,
-      };
-    });
-    await invalidateRenderJobs(id, nextRevision.id);
+    const updated = await updateProject(
+      id,
+      (current) => {
+        const currentRevision = activeRevision(current);
+        if (
+          !currentRevision ||
+          currentRevision.id !== revision.id ||
+          currentRevision.version !== body.expectedVersion
+        ) {
+          throw new PublicError(
+            "The presentation changed while the revision was generated. Refresh and try again.",
+            409,
+          );
+        }
+        return invalidateDeckOutputs({
+          ...current,
+          revisions: [...current.revisions, nextRevision],
+          activeRevisionId: nextRevision.id,
+          lastError: null,
+        });
+      },
+      { beforeCommit: () => invalidateRenderJobs(id, nextRevision.id) },
+    );
     return NextResponse.json({ project: updated, summary: patch.summary });
   } catch (error) {
     return publicErrorResponse(error, "AI revision failed. Check local service access and try again.", 502);

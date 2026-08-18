@@ -5,6 +5,7 @@ import { slideCopyFitIssues } from "@/lib/slide-fit";
 import { getProject, updateProject } from "@/lib/store";
 import { rejectNonLocalMutation } from "@/lib/http";
 import { invalidateRenderJobs } from "@/lib/render-queue";
+import { invalidateDeckOutputs } from "@/lib/project-state";
 
 export async function PATCH(
   request: Request,
@@ -56,27 +57,27 @@ export async function PATCH(
       slide.id === slideId ? { ...slide, ...parsed.data.changes } : slide,
     ),
   };
-  let updated;
   try {
-    updated = await updateProject(id, (current) => {
-      const currentRevision = activeRevision(current);
-      if (
-        !currentRevision ||
-        currentRevision.id !== revision.id ||
-        currentRevision.version !== parsed.data.expectedVersion
-      ) {
-        throw new Error("REVISION_CONFLICT");
-      }
-      return {
-        ...current,
-        revisions: [...current.revisions, nextRevision],
-        activeRevisionId: nextRevision.id,
-        approvedDeckRevisionId: null,
-        renderJobs: current.renderJobs.map((job) =>
-          job.status === "complete" ? { ...job, status: "stale" as const } : job,
-        ),
-      };
-    });
+    const updated = await updateProject(
+      id,
+      (current) => {
+        const currentRevision = activeRevision(current);
+        if (
+          !currentRevision ||
+          currentRevision.id !== revision.id ||
+          currentRevision.version !== parsed.data.expectedVersion
+        ) {
+          throw new Error("REVISION_CONFLICT");
+        }
+        return invalidateDeckOutputs({
+          ...current,
+          revisions: [...current.revisions, nextRevision],
+          activeRevisionId: nextRevision.id,
+        });
+      },
+      { beforeCommit: () => invalidateRenderJobs(id, nextRevision.id) },
+    );
+    return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof Error && error.message === "REVISION_CONFLICT") {
       return NextResponse.json(
@@ -84,8 +85,6 @@ export async function PATCH(
         { status: 409 },
       );
     }
-    throw error;
+    return NextResponse.json({ error: "Could not save the slide" }, { status: 500 });
   }
-  await invalidateRenderJobs(id, nextRevision.id);
-  return NextResponse.json(updated);
 }

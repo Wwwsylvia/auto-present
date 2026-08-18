@@ -141,6 +141,21 @@ export const slideSchema = z.object({
 });
 export type Slide = z.infer<typeof slideSchema>;
 
+export const maximumNaturalWordsPerSecond = 2.5;
+
+export function narrationFit(
+  slide: Pick<Slide, "narration" | "durationSeconds">,
+): { fits: boolean; wordCount: number; maximumWords: number; wordsPerSecond: number } {
+  const wordCount = slide.narration.trim().split(/\s+/).filter(Boolean).length;
+  const maximumWords = Math.floor(slide.durationSeconds * maximumNaturalWordsPerSecond);
+  return {
+    fits: wordCount <= maximumWords,
+    wordCount,
+    maximumWords,
+    wordsPerSecond: wordCount / slide.durationSeconds,
+  };
+}
+
 export const presentationRevisionSchema = z.object({
   id: z.string(),
   version: z.number().int().positive(),
