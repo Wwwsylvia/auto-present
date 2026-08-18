@@ -16,9 +16,9 @@
 3. Foundry receives the brief and bounded evidence as explicitly untrusted user-context data. It runs strategy, draft, then critic refinement; each structured response is schema validated, with at most one retry for an invalid response per pass.
 4. The persisted revision contains an audience strategy (message, problem, solution, differentiators, proof points, narrative arc, voiceover direction, and demo recommendation) and layout-specific structured visuals.
 5. Deterministic validation checks narrative structure, known evidence, visual variety, text density, repeated claims, narration, demo consistency, and exact duration. Duration allocation uses integer seconds weighted by narration length.
-6. Every direct or AI edit creates an immutable revision. Approval records a specific revision ID.
+6. Every direct, AI, regenerated-brief, or restored edit creates an immutable revision. Approval records a specific revision ID. Content changes clear deck approval and mark completed renders stale; navigation alone does not.
 7. Rendering accepts only the currently approved deck revision. Demo upload additionally requires that revision to contain a semantic `demo` layout and `demo` visual.
-8. Browser preview components and MP4 SVG inputs implement the same layout-specific visual model. Speech audio is synthesized per slide, and FFmpeg joins the immutable segments.
+8. Browser preview components and MP4 SVG inputs implement the same layout-specific visual model. Speech audio is synthesized per slide at its natural rate. Short audio is padded to preserve exact runtime; measured overruns fail with slide-specific guidance instead of being accelerated. FFmpeg joins the immutable segments.
 9. Editing marks completed render jobs stale.
 
 ## Production topology

@@ -36,25 +36,35 @@ export async function POST(
       ),
     }));
     const { job } = await renderPresentation(renderingProject, kind, jobId);
-    const updated = await updateProject(id, (current) => ({
-      ...current,
-      renderJobs: current.renderJobs.map((currentJob) =>
-        currentJob.id === jobId ? job : currentJob,
-      ),
-      lastError: null,
-    }));
+    const updated = await updateProject(id, (current) => {
+      const invalidated = current.renderJobs.some(
+        (currentJob) => currentJob.id === jobId && currentJob.status === "stale",
+      );
+      return {
+        ...current,
+        renderJobs: current.renderJobs.map((currentJob) =>
+          currentJob.id === jobId && currentJob.status !== "stale" ? job : currentJob,
+        ),
+        lastError: invalidated ? current.lastError : null,
+      };
+    });
     return NextResponse.json(updated);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Rendering failed";
-    await updateProject(id, (current) => ({
-      ...current,
-      lastError: message,
-      renderJobs: current.renderJobs.map((job) =>
-        job.id === jobId
-          ? { ...job, status: "failed" as const, error: message, progress: 0 }
-          : job,
-      ),
-    }));
+    await updateProject(id, (current) => {
+      const invalidated = current.renderJobs.some(
+        (job) => job.id === jobId && job.status === "stale",
+      );
+      return {
+        ...current,
+        lastError: invalidated ? current.lastError : message,
+        renderJobs: current.renderJobs.map((job) =>
+          job.id === jobId && job.status !== "stale"
+            ? { ...job, status: "failed" as const, error: message, progress: 0 }
+            : job,
+        ),
+      };
+    });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
