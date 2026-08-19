@@ -120,12 +120,10 @@ export async function synthesizeSpeech(
   outputFile: string,
 ): Promise<Boundary[]> {
   const region = process.env.AZURE_SPEECH_REGION;
-  const endpoint =
-    process.env.AZURE_SPEECH_ENDPOINT ??
-    (region ? `https://${region}.tts.speech.microsoft.com/` : undefined);
-  if (!endpoint) {
-    throw new PublicError("Configure the Azure Speech endpoint.", 503);
+  if (!region) {
+    throw new PublicError("Configure AZURE_SPEECH_REGION for narration.", 503);
   }
+  const endpoint = `https://${region}.tts.speech.microsoft.com/`;
   const voice = process.env.AZURE_SPEECH_VOICE ?? "en-US-AvaMultilingualNeural";
   const response = await fetch(
     new URL("cognitiveservices/v1", endpoint.endsWith("/") ? endpoint : `${endpoint}/`),

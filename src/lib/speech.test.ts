@@ -24,7 +24,7 @@ test("falls back to monotonic sentence-level estimated cues", () => {
   assert.ok(cues[0].endSeconds <= cues[1].startSeconds);
 });
 
-test("uses the regional Azure Speech synthesis endpoint", async () => {
+test("uses the regional synthesis endpoint even when a custom resource endpoint is configured", async () => {
   const previousFetch = globalThis.fetch;
   const previousRegion = process.env.AZURE_SPEECH_REGION;
   const previousKey = process.env.AZURE_SPEECH_KEY;
@@ -33,7 +33,7 @@ test("uses the regional Azure Speech synthesis endpoint", async () => {
   let requestedUrl = "";
   process.env.AZURE_SPEECH_REGION = "eastus";
   process.env.AZURE_SPEECH_KEY = "test-key";
-  delete process.env.AZURE_SPEECH_ENDPOINT;
+  process.env.AZURE_SPEECH_ENDPOINT = "https://speech-resource.cognitiveservices.azure.com/";
   globalThis.fetch = async (input) => {
     requestedUrl = String(input);
     return new Response(new Uint8Array([1]), { status: 200 });

@@ -15,7 +15,6 @@ export function foundryConfigured(): boolean {
 export function speechConfigured(): boolean {
   return Boolean(
     process.env.AZURE_SPEECH_REGION &&
-      (process.env.AZURE_SPEECH_ENDPOINT || process.env.AZURE_SPEECH_KEY) &&
       (process.env.AZURE_SPEECH_KEY ||
         (process.env.AZURE_SPEECH_USE_AZURE_CREDENTIAL !== "false" &&
           process.env.AZURE_SPEECH_RESOURCE_ID)),
