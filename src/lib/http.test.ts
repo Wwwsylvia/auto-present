@@ -13,6 +13,17 @@ test("accepts loopback same-origin mutations", () => {
   assert.equal(rejectNonLocalRequest(request), undefined);
 });
 
+test("accepts a loopback Host when the framework reconstructs a different internal URL", () => {
+  const request = new Request("http://localhost:3001/api/projects", {
+    method: "POST",
+    headers: {
+      Host: "127.0.0.1:3000",
+      Origin: "http://127.0.0.1:3000",
+    },
+  });
+  assert.equal(rejectNonLocalRequest(request), undefined);
+});
+
 test("rejects non-loopback, forged Host, and cross-origin requests", () => {
   assert.equal(
     rejectNonLocalRequest(
@@ -36,6 +47,17 @@ test("rejects non-loopback, forged Host, and cross-origin requests", () => {
         headers: {
           Host: "127.0.0.1:3000",
           Origin: "https://example.com",
+        },
+      }),
+    )?.status,
+    403,
+  );
+  assert.equal(
+    rejectNonLocalRequest(
+      new Request("http://localhost:3001/api/projects", {
+        headers: {
+          Host: "127.0.0.1:3000",
+          Origin: "http://localhost:3000",
         },
       }),
     )?.status,
