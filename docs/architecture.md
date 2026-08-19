@@ -9,7 +9,7 @@ Idea2Impact is intentionally a **localhost-only, single-machine system**. “Pro
 - **GitHub:** bounded public metadata and selected manifest/README evidence. Repository content is untrusted data and is never inserted into system instructions.
 - **Azure AI Speech:** outbound, server-side per-slide narration using passwordless Azure CLI identity by default.
 - **Local render worker:** a separate process atomically claims durable jobs with a unique lease token, synthesizes narration, invokes FFmpeg, and persists progress. Every heartbeat and terminal transition must present the current token. Transient failures receive three bounded attempts before manual retry.
-- **FFmpeg/FFprobe:** deterministic slide composition, validated optional demo footage, audio, sentence-level captions, MP4 encoding, and media verification.
+- **FFmpeg/FFprobe:** deterministic slide composition, validated optional demo footage targeted to an approved slide, audio, sentence-level captions, MP4 encoding, and media verification.
 - **Persistence:** atomic JSON snapshots, durable queue records, and local file assets for this single-user MVP under `IDEA2IMPACT_DATA_DIR`.
 
 ## Data flow

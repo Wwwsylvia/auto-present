@@ -8,14 +8,14 @@ Idea2Impact turns a rough project idea into a structured, editable presentation 
 
 - Guided brief with a required idea, audience, tone, and 1–10 minute target
 - Optional bounded analysis of public GitHub repositories
-- Microsoft Foundry-backed structured presentation generation
+- Microsoft Foundry-backed structured presentation generation with optional `gpt-image-2` visuals
 - Deterministic demo generation when Foundry is not configured
 - Reversible Brief → Review deck → Produce video workflow with explicit back controls and one whole-deck approval
 - Revision-safe direct slide and narration editing
 - Brief regeneration and prior-revision restore without losing project history
 - Contextual Foundry revisions expressed as validated typed patches
 - Optional MP4, WebM, or QuickTime demo-clip insertion
-- Semantic demo recommendations with setup, action, and payoff; uploads require an approved semantic demo slide
+- Semantic demo recommendations with setup, action, and payoff; an optional clip can replace any chosen approved slide visual in the rendered video
 - Passwordless, natural-rate Azure AI Speech narration and sentence-timed FFmpeg captions
 - Silent low-quality preview in local demo mode and narrated final MP4 with Azure Speech
 - Layout-specific browser and MP4 rendering, plus deterministic quality and exact-duration checks
@@ -78,6 +78,8 @@ Then open `http://127.0.0.1:3000`. `npm start` remains localhost-only; “produc
 | --- | --- |
 | `FOUNDRY_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint |
 | `FOUNDRY_MODEL_DEPLOYMENT` | Deployed model name |
+| `FOUNDRY_IMAGE_ENDPOINT` | Azure OpenAI/Foundry resource endpoint for generated slide imagery |
+| `FOUNDRY_IMAGE_MODEL_DEPLOYMENT` | Separate image deployment name; use `gpt-image-2` |
 | `AZURE_SPEECH_KEY` | Optional Azure AI Speech subscription-key fallback |
 | `AZURE_SPEECH_REGION` | Azure AI Speech region |
 | `AZURE_SPEECH_RESOURCE_ID` | Full Azure resource ID; required to construct passwordless Speech authorization |
@@ -86,7 +88,7 @@ Then open `http://127.0.0.1:3000`. `npm start` remains localhost-only; “produc
 | `GITHUB_TOKEN` | Optional token to raise public GitHub API limits |
 | `IDEA2IMPACT_DATA_DIR` | Persistent project/render directory; defaults to `.data` |
 
-When using passwordless Foundry or Speech, install Azure CLI and run `az login` locally. `DefaultAzureCredential` uses that identity. Azure CLI is not required for deterministic generation, silent previews, or Speech configured with `AZURE_SPEECH_KEY`. Grant only the relevant Foundry inference access and the **Cognitive Services Speech User** role. Keep `.env.local` limited to non-secret endpoint, deployment, and region values where possible.
+When using passwordless Foundry, image generation, or Speech, install Azure CLI and run `az login` locally. `DefaultAzureCredential` uses that identity. Azure CLI is not required for deterministic generation, silent previews, or Speech configured with `AZURE_SPEECH_KEY`. Grant only the relevant Foundry inference access, **Cognitive Services OpenAI User**, and **Cognitive Services Speech User** roles. Keep `.env.local` limited to non-secret endpoint, deployment, and region values where possible.
 
 ## Validation
 

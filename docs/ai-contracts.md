@@ -2,9 +2,11 @@
 
 ## Generation
 
-The presentation copilot receives the brief, duration budget, optional normalized repository snapshot, and an explicit response shape. The response must validate as a `PresentationRevision`: 3–20 slides with typed layouts, bounded text, narration, timing, and evidence paths.
+The presentation copilot receives the brief, duration budget, exact duration-derived slide count, inferred audience decision lens, optional normalized repository snapshot, and an explicit response shape. The response must validate as a `PresentationRevision`: 3–20 slides with typed layouts, bounded text, narration, timing, evidence paths, and optional image intent.
 
-The active prompt contract is `presentation-v1`; the version and generation source are stored on every revision.
+The active prompt contract is `deck-intelligence-v3`; the version and generation source are stored on every revision.
+
+Image intents include a prompt, alt text, caption, and complete structured fallback. Two to four high-impact image intents are materialized through a separately configured Microsoft Foundry `gpt-image-2` deployment. Base64 output is normalized and persisted locally. A filtered or failed request keeps the structured fallback and adds a user-visible revision warning.
 
 ## Contextual revision
 
@@ -28,6 +30,8 @@ Chat does not overwrite free-form documents. It returns:
 ```
 
 Unknown slide IDs, empty patches, invalid fields, and out-of-range values fail explicitly. Applying a patch creates a new immutable revision and invalidates approved output.
+
+Every revision request also carries `scope: "slide" | "deck"`. Slide scope requires `selectedSlideId`, sends focused slide context, and rejects a patch touching any other ID. Deck scope may patch multiple existing slides while preserving the validated arc, exact duration, and image constraints.
 
 ## Trust boundary
 

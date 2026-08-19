@@ -1,12 +1,32 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   audioTimingFilter,
   findDemoSlideIndex,
+  renderPresentation,
   renderSlideSvg,
   resolveDemoFootageIndex,
 } from "@/lib/render";
-import type { Slide, Visual } from "@/lib/domain";
+import type { Project, Slide, Visual } from "@/lib/domain";
+
+function run(command: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} failed: ${stderr.slice(-1000)}`));
+    });
+  });
+}
 
 function slide(visual: Visual, layout: Slide["layout"] = "solution"): Slide {
   return {
@@ -39,6 +59,21 @@ test("renders a distinctive composition for every visual payload", () => {
     assert.match(svg, new RegExp(`data-visual="${visual.type}"`));
     assert.match(svg, new RegExp(`visual-${visual.type}`));
   }
+});
+
+test("embeds generated imagery with its accessible caption in rendered SVG", () => {
+  const visual: Visual = {
+    type: "image",
+    prompt: "A team reviewing a finished presentation.",
+    altText: "A team gathered around a presentation display.",
+    caption: "Shared context becomes a clear decision",
+    assetId: "00000000-0000-4000-8000-000000000001",
+    fallback: { type: "statement", statement: "A structured fallback" },
+  };
+  const svg = renderSlideSvg(slide(visual), 0, "data:image/png;base64,AA==");
+  assert.match(svg, /data-visual="image"/);
+  assert.match(svg, /data:image\/png;base64,AA==/);
+  assert.match(svg, /Shared context becomes a clear decision/);
 });
 
 test("renders every layout with its layout-specific composition", () => {
@@ -75,14 +110,15 @@ test("wraps and XML-escapes multiline presentation text without dropping bullet 
 
 test("selects demo footage by semantic layout and visual type", () => {
   const slides = [
-    slide({ type: "demo", setup: "Start.", action: "Act.", payoff: "Show." }, "demo"),
-    slide({ type: "statement", statement: "Not a demo." }, "closing"),
-    slide({ type: "statement", statement: "Also not a demo." }, "demo"),
-    slide({ type: "statement", statement: "Final slide." }, "closing"),
+    { ...slide({ type: "demo", setup: "Start.", action: "Act.", payoff: "Show." }, "demo"), id: "slide-1" },
+    { ...slide({ type: "statement", statement: "Not a demo." }, "closing"), id: "slide-2" },
+    { ...slide({ type: "statement", statement: "Also not a demo." }, "demo"), id: "slide-3" },
+    { ...slide({ type: "statement", statement: "Final slide." }, "closing"), id: "slide-4" },
   ];
 
   assert.equal(findDemoSlideIndex(slides), 0);
   assert.equal(resolveDemoFootageIndex(slides, true), 0);
+  assert.equal(resolveDemoFootageIndex(slides, true, slides[2].id), 2);
 });
 
 test("rejects an uploaded demo asset when the approved deck has no semantic demo slide", () => {
@@ -93,9 +129,115 @@ test("rejects an uploaded demo asset when the approved deck has no semantic demo
 
   assert.throws(
     () => resolveDemoFootageIndex(slides, true),
-    /demo video asset but no semantic demo slide/,
+    /legacy demo video asset has no semantic demo slide/,
   );
   assert.equal(resolveDemoFootageIndex(slides, false), undefined);
+  assert.throws(
+    () => resolveDemoFootageIndex(slides, true, "missing-slide"),
+    /no longer contains the demo clip target slide/,
+  );
+});
+
+test("integrates a targeted demo clip into the rendered presentation", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "idea2impact-demo-render-"));
+  const previousDataDirectory = process.env.IDEA2IMPACT_DATA_DIR;
+  const speechVariables = [
+    "AZURE_SPEECH_REGION",
+    "AZURE_SPEECH_KEY",
+    "AZURE_SPEECH_RESOURCE_ID",
+  ] as const;
+  const previousSpeech = new Map(
+    speechVariables.map((name) => [name, process.env[name]]),
+  );
+  process.env.IDEA2IMPACT_DATA_DIR = directory;
+  for (const name of speechVariables) delete process.env[name];
+  try {
+    const clip = path.join(directory, "demo.mp4");
+    await run("ffmpeg", [
+      "-y", "-f", "lavfi", "-i", "color=c=0x33aa66:s=320x180:d=1",
+      "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip,
+    ]);
+    const slides = [
+      { ...slide({ type: "statement", statement: "Opening promise" }, "hero"), id: "opening", durationSeconds: 3 },
+      { ...slide({ type: "flow", steps: [{ label: "Input" }, { label: "Outcome" }] }), id: "clip-target", durationSeconds: 3 },
+      { ...slide({ type: "statement", statement: "Closing decision" }, "closing"), id: "closing", durationSeconds: 3 },
+    ];
+    const revisionId = "revision";
+    const project: Project = {
+      id: "project",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      stage: "produce",
+      input: {
+        idea: "A valid product concept that demonstrates targeted demo clip rendering.",
+        audience: "Reviewers",
+        tone: "confident",
+        durationMinutes: 1,
+        githubUrl: "",
+      },
+      repository: null,
+      revisions: [{
+        id: revisionId,
+        version: 1,
+        createdAt: new Date().toISOString(),
+        title: "Demo clip integration",
+        tagline: "A rendered proof",
+        summary: "The chosen slide visual is replaced by uploaded footage.",
+        strategy: {
+          audienceGoal: "Show reviewers that uploaded footage appears in the presentation.",
+          audienceLens: {
+            decision: "Confirm that the render includes the selected clip.",
+            priorKnowledge: "Reviewers understand presentation video.",
+            priorities: ["Visible integration"],
+            objections: [],
+            preferredProof: "The encoded MP4 contains the targeted footage.",
+            callToAction: "Approve the integrated render.",
+          },
+          coreMessage: "Demo footage appears at the selected story moment.",
+          problem: "Detached demo clips weaken the presentation.",
+          solution: "Target the clip to an approved slide.",
+          differentiators: ["Explicit placement"],
+          proofPoints: [],
+          narrativeArc: ["hook", "solution", "close"],
+          voiceoverDirection: "Keep narration focused on the outcome.",
+          demoPlan: { recommendation: "omit", rationale: "Placement is user-selected." },
+        },
+        slides,
+        promptVersion: "test",
+        source: "demo",
+        imageWarnings: [],
+      }],
+      activeRevisionId: revisionId,
+      approvedPlanRevisionId: revisionId,
+      approvedDeckRevisionId: revisionId,
+      renderJobs: [],
+      assets: [{
+        id: "asset",
+        kind: "demo-video",
+        name: "demo.mp4",
+        mimeType: "video/mp4",
+        size: (await fs.stat(clip)).size,
+        localPath: clip,
+        slideId: "clip-target",
+        durationSeconds: 1,
+      }],
+      lastError: null,
+    };
+
+    const result = await renderPresentation(project, "preview", "job");
+    assert.equal(result.usedDemoAsset, true);
+    assert.equal(result.durationSeconds, 9);
+    await fs.access(result.outputPath);
+  } finally {
+    if (previousDataDirectory === undefined) delete process.env.IDEA2IMPACT_DATA_DIR;
+    else process.env.IDEA2IMPACT_DATA_DIR = previousDataDirectory;
+    for (const name of speechVariables) {
+      const value = previousSpeech.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("preserves natural audio speed and rejects narration overruns", () => {

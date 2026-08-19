@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   actualDurationSeconds,
@@ -18,15 +19,9 @@ function formatTime(seconds: number) {
 }
 
 function visualLabel(visual: Visual) {
-  return visual.type === "demo" ? "Demo storyboard" : `${visual.type} visual`;
-}
-
-function hasSemanticDemo(revision: ReturnType<typeof activeRevision>, approvedRevisionId: string | null) {
-  return Boolean(
-    revision &&
-      revision.id === approvedRevisionId &&
-      revision.slides.some((slide) => slide.layout === "demo" && slide.visual.type === "demo"),
-  );
+  if (visual.type === "demo") return "Demo storyboard";
+  if (visual.type === "image") return "AI-generated editorial image";
+  return `${visual.type} visual`;
 }
 
 type WorkspaceStage = "brief" | "review" | "produce";
@@ -62,7 +57,7 @@ function StageNav({
   );
 }
 
-function VisualComposition({ visual }: { visual: Visual }) {
+function VisualComposition({ projectId, visual }: { projectId: string; visual: Visual }) {
   switch (visual.type) {
     case "statement":
       return <blockquote className="visual-statement">“{visual.statement}”</blockquote>;
@@ -78,17 +73,22 @@ function VisualComposition({ visual }: { visual: Visual }) {
       return <ol className="visual-timeline">{visual.events.map((event, index) => <li key={event.label}><b>{String(index + 1).padStart(2, "0")}</b><div><strong>{event.label}</strong>{event.detail && <span>{event.detail}</span>}</div></li>)}</ol>;
     case "demo":
       return <div className="visual-demo"><div><span>Setup</span><strong>{visual.setup}</strong></div><div><span>Action</span><strong>{visual.action}</strong></div><div><span>Payoff</span><strong>{visual.payoff}</strong></div></div>;
+    case "image":
+      return visual.assetId
+        ? <figure className="visual-image"><Image alt={visual.altText} fill sizes="(max-width: 1200px) 70vw, 900px" src={`/api/projects/${projectId}/images/${visual.assetId}`} unoptimized /><figcaption>{visual.caption}</figcaption></figure>
+        : <VisualComposition projectId={projectId} visual={visual.fallback} />;
   }
 }
 
-function SlidePreview({ slide }: { slide: Slide }) {
+function SlidePreview({ projectId, slide }: { projectId: string; slide: Slide }) {
   return (
     <div className={`slide-canvas layout-${slide.layout} has-visual-${slide.visual.type}`}>
       <div className="slide-topline"><span>IDEA2IMPACT</span><span>{slide.layout}</span></div>
       <div className="slide-content">
         <p className="slide-kicker">{slide.purpose}</p>
         <h2>{slide.title}</h2>
-        <VisualComposition visual={slide.visual} />
+        <VisualComposition projectId={projectId} visual={slide.visual} />
+        {slide.bullets.length > 0 && <ul className="slide-support">{slide.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>}
       </div>
       <div className="slide-footer"><span>idea → impact</span><span>{formatTime(slide.durationSeconds)}</span></div>
     </div>
@@ -105,6 +105,9 @@ function StrategyPanel({ strategy }: { strategy: PresentationStrategy }) {
       <dl>
         <div><dt>Core message</dt><dd>{strategy.coreMessage}</dd></div>
         <div><dt>Audience goal</dt><dd>{strategy.audienceGoal}</dd></div>
+        <div><dt>Decision lens</dt><dd>{strategy.audienceLens.decision}</dd></div>
+        <div><dt>Trusted proof</dt><dd>{strategy.audienceLens.preferredProof}</dd></div>
+        <div><dt>Call to action</dt><dd>{strategy.audienceLens.callToAction}</dd></div>
         <div><dt>Proof & narrative</dt><dd>{proofNarrative}</dd></div>
         <div><dt>Voiceover direction</dt><dd>{strategy.voiceoverDirection}</dd></div>
         <div><dt>Demo decision</dt><dd><b>{strategy.demoPlan.recommendation === "include" ? "Include a focused demo" : "Omit the demo"}</b> — {strategy.demoPlan.rationale}</dd></div>
@@ -129,6 +132,8 @@ function VisualEditor({ visual }: { visual: Visual }) {
       return <fieldset className="visual-editor"><legend>Timeline events</legend>{visual.events.map((event, index) => <div className="visual-editor-row" key={`${event.label}-${index}`}><label>Event<input defaultValue={event.label} name={`timeline-label-${index}`} required /></label><label>Detail<input defaultValue={event.detail ?? ""} name={`timeline-detail-${index}`} /></label></div>)}</fieldset>;
     case "demo":
       return <fieldset className="visual-editor"><legend>Demo storyboard</legend><label>Setup<textarea defaultValue={visual.setup} name="demo-setup" required rows={2} /></label><label>Action<textarea defaultValue={visual.action} name="demo-action" required rows={2} /></label><label>Payoff<textarea defaultValue={visual.payoff} name="demo-payoff" required rows={2} /></label></fieldset>;
+    case "image":
+      return <fieldset className="visual-editor"><legend>AI image</legend><label>Generation prompt<textarea disabled value={visual.prompt} rows={4} /></label><label>Alt text<textarea defaultValue={visual.altText} name="image-alt" required rows={2} /></label><label>Caption<input defaultValue={visual.caption} name="image-caption" required /></label><small className="field-help">Use AI revision to request a different image; direct edits update only its accessible copy.</small></fieldset>;
   }
 
 }
@@ -186,6 +191,7 @@ function visualFromForm(formData: FormData, visual: Visual): Visual {
     case "metrics": return { type: "metrics", metrics: visual.metrics.map((_, index) => ({ value: formText(formData, `metric-value-${index}`), label: formText(formData, `metric-label-${index}`), detail: optionalFormText(formData, `metric-detail-${index}`) })) };
     case "timeline": return { type: "timeline", events: visual.events.map((_, index) => ({ label: formText(formData, `timeline-label-${index}`), detail: optionalFormText(formData, `timeline-detail-${index}`) })) };
     case "demo": return { type: "demo", setup: formText(formData, "demo-setup"), action: formText(formData, "demo-action"), payoff: formText(formData, "demo-payoff") };
+    case "image": return { ...visual, altText: formText(formData, "image-alt"), caption: formText(formData, "image-caption") };
   }
 }
 
@@ -208,6 +214,7 @@ export function ProjectWorkspace({
   const [error, setError] = useState<{ area: string; message: string } | null>(project.lastError ? { area: "workspace", message: project.lastError } : null);
   const [notice, setNotice] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
+  const [revisionScope, setRevisionScope] = useState<"slide" | "deck">("slide");
   const selected = revision?.slides.find((slide) => slide.id === selectedId) ?? revision?.slides[0];
   const total = revision ? actualDurationSeconds(revision) : 0;
   const target = project.input.durationMinutes * 60;
@@ -339,10 +346,10 @@ export function ProjectWorkspace({
     if (!instruction) return;
     if (dirty && !window.confirm("Discard unsaved slide changes and apply an AI revision?")) return;
     setPending("revise"); setError(null); setChangeSummary("");
-    const response = await fetch(`/api/projects/${project.id}/revise`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instruction, expectedVersion: revision.version }) });
+    const response = await fetch(`/api/projects/${project.id}/revise`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instruction, expectedVersion: revision.version, scope: revisionScope, selectedSlideId: revisionScope === "slide" ? selected?.id : undefined }) });
     const body = await response.json(); setPending("");
     if (!response.ok) return reportError("revise", body.error ?? "AI revision failed");
-    setProject(body.project); setDirty(false); setChangeSummary(body.summary); setNotice("AI revision applied."); router.refresh();
+    setProject(body.project); setDirty(false); setChangeSummary(body.summary); setNotice(revisionScope === "slide" ? `AI revision applied to "${selected?.title}".` : "AI revision applied to the whole deck."); router.refresh();
   }
 
   async function restoreRevision(revisionId: string) {
@@ -422,8 +429,13 @@ export function ProjectWorkspace({
 
   if (viewStage === "produce") {
     const demoSlide = revision.slides.find((slide) => slide.layout === "demo" && slide.visual.type === "demo");
-    const canUseDemo = hasSemanticDemo(revision, project.approvedDeckRevisionId);
     const demo = project.assets.find((asset) => asset.kind === "demo-video");
+    const demoTargetId =
+      demo?.slideId ??
+      demoSlide?.id ??
+      revision.slides.at(-2)?.id ??
+      revision.slides[0].id;
+    const demoTarget = revision.slides.find((slide) => slide.id === demoTargetId);
     const activeJobs = project.renderJobs.filter((job) =>
       ["queued", "rendering", "retrying"].includes(job.status),
     );
@@ -448,9 +460,10 @@ export function ProjectWorkspace({
           {notice && <p className="success" role="status">{notice}</p>}
           <div className="production-grid">
             <section className="production-panel">
-              {canUseDemo && demoSlide?.visual.type === "demo" ? (
-                <>
-                  <h2>Demo moment</h2>
+              <h2>Demo clip placement</h2>
+              {demoSlide?.visual.type === "demo" ? (
+                <div className="demo-guidance">
+                  <strong>Recommended story moment</strong>
                   <p className="demo-guidance">
                     The clip supports this slide&apos;s promised proof. Keep the voiceover focused on
                     the audience outcome—not controls.
@@ -460,29 +473,26 @@ export function ProjectWorkspace({
                     <div><dt>Action</dt><dd>{demoSlide.visual.action}</dd></div>
                     <div><dt>Payoff</dt><dd>{demoSlide.visual.payoff}</dd></div>
                   </dl>
-                  <p className="field-help">MP4, WebM, or QuickTime · maximum 100 MB</p>
-                  {demo && (
-                    <div className="asset-summary">
-                      <div><strong>{demo.name}</strong><small>{(demo.size / 1024 / 1024).toFixed(1)} MB</small></div>
-                      <button className="text-button" disabled={Boolean(pending)} onClick={() => void removeDemo()} type="button">
-                        {pending === "remove" ? "Removing..." : "Remove"}
-                      </button>
-                    </div>
-                  )}
-                  <form action={uploadDemo} className="asset-upload">
-                    <input accept="video/mp4,video/webm,video/quicktime" name="file" required type="file" />
-                    <button className="secondary" disabled={Boolean(pending)} type="submit">
-                      {pending === "upload" ? "Uploading..." : demo ? "Replace demo clip" : "Upload demo clip"}
-                    </button>
-                  </form>
-                </>
+                </div>
               ) : (
-                <>
-                  <h2>No demo clip for this deck</h2>
-                  <p>This approved deck does not contain a semantic demo slide, so a video upload would not have a defined story moment.</p>
-                  <p className="demo-guidance">{revision.strategy.demoPlan.rationale}</p>
-                </>
+                <p className="demo-guidance">This deck has no dedicated demo slide. Choose the slide whose visual should be replaced by the clip; its narration and duration remain part of the presentation.</p>
               )}
+              <p className="field-help">The video is looped or trimmed to the selected slide&apos;s duration. MP4, WebM, or QuickTime · maximum 100 MB.</p>
+              {demo && (
+                <div className="asset-summary">
+                  <div><strong>{demo.name}</strong><small>{(demo.size / 1024 / 1024).toFixed(1)} MB · {demo.durationSeconds?.toFixed(1) ?? "?"}s · {demoTarget?.title ?? "Unknown slide"}</small></div>
+                  <button className="text-button" disabled={Boolean(pending)} onClick={() => void removeDemo()} type="button">
+                    {pending === "remove" ? "Removing..." : "Remove"}
+                  </button>
+                </div>
+              )}
+              <form action={uploadDemo} className="asset-upload">
+                <label>Show clip on slide<select defaultValue={demoTargetId} name="slideId" required>{revision.slides.map((slide, index) => <option key={slide.id} value={slide.id}>{index + 1}. {slide.title} ({formatTime(slide.durationSeconds)})</option>)}</select></label>
+                <input accept="video/mp4,video/webm,video/quicktime" name="file" required type="file" />
+                <button className="secondary" disabled={Boolean(pending)} type="submit">
+                  {pending === "upload" ? "Uploading..." : demo ? "Replace demo clip" : "Upload demo clip"}
+                </button>
+              </form>
               {error?.area === "upload" && <p className="error" role="alert">{error.message}</p>}
             </section>
             <section className="production-panel production-render">
@@ -535,5 +545,5 @@ export function ProjectWorkspace({
     );
   }
 
-  return <>{stageNav}<section className="approval-bar"><button className="secondary back-button" onClick={() => navigateStage("brief")} type="button">← Back to brief</button><div><strong>Review the entire deck</strong><span>Approval includes all slides and narration, not only the selected slide.</span></div><button className="primary" disabled={Boolean(pending)} onClick={() => void approveDeck()} type="button">{pending === "approve" ? "Approving deck..." : "Approve entire deck & continue to video"}<span>→</span></button>{error?.area === "approve" && <p className="error" role="alert">{error.message}</p>}</section>{notice && <p className="workspace-notice success" role="status">{notice}</p>}<section className="workspace review-workspace"><aside className="slide-list"><div className="panel-heading"><span>{revision.slides.length} slides</span><span>{formatTime(total)}</span></div>{revision.slides.map((slide, index) => <button className={slide.id === selected?.id ? "thumbnail selected" : "thumbnail"} key={slide.id} onClick={() => selectSlide(slide.id)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{slide.title}</strong><small>{slide.layout} · {slide.visual.type}</small></div><time>{formatTime(slide.durationSeconds)}</time></button>)}</aside><div className="preview-panel"><div className="preview-toolbar"><div><span className={`source source-${revision.source}`}>{revision.source === "demo" ? "Demo content" : "AI generated"}</span>Revision {revision.version}</div><div className={Math.abs(durationStatus) > 10 ? "duration-warning" : "duration-ok"}>{formatTime(total)} / {formatTime(target)} target</div></div>{selected && <SlidePreview slide={selected} />}<div className="slide-intent"><div><span>Audience takeaway</span><p>{selected?.audienceTakeaway}</p></div><div><span>Visual intent</span><p>{selected && visualLabel(selected.visual)} — the on-screen structure is designed to make this slide&apos;s point scannable before the narration adds context.</p></div></div><div className="narration-preview"><strong>Voiceover</strong><p>{selected?.narration}</p></div><StrategyPanel strategy={revision.strategy} /><section className="revision-history"><div className="panel-heading"><strong>Revision history</strong><span>{project.revisions.length} versions</span></div>{project.revisions.toReversed().map((item) => <div className={item.id === revision.id ? "revision-row current" : "revision-row"} key={item.id}><div><strong>Revision {item.version}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.source === "demo" ? "Demo" : "AI"}</small></div><button className="text-button" disabled={Boolean(pending) || item.id === revision.id} onClick={() => void restoreRevision(item.id)} type="button">{item.id === revision.id ? "Current" : "Restore"}</button></div>)}{error?.area === "restore" && <p className="error" role="alert">{error.message}</p>}</section></div>{selected && <aside className="properties-panel" key={`${revision.id}-${selected.id}`}><form action={saveSlide} className="edit-slide-form" onChange={() => setDirty(true)}><div className="panel-heading"><strong>Edit slide</strong><span>{selected.layout} · {selected.visual.type}</span></div><label>Title<input name="title" defaultValue={selected.title} required /></label><label>Purpose<input name="purpose" defaultValue={selected.purpose} required /><small className="field-help">The role this slide plays in your story.</small></label><label>Audience takeaway<textarea name="audienceTakeaway" defaultValue={selected.audienceTakeaway} required rows={3} /></label><label>Key points<textarea name="bullets" rows={5} defaultValue={selected.bullets.join("\n")} /><small className="field-help">Each line becomes one bullet.</small></label><VisualEditor visual={selected.visual} /><NarrationEditor slide={selected} />{dirty && <p className="unsaved-note" role="status">Unsaved changes</p>}{error?.area === "save" && <p className="error" role="alert">{error.message}</p>}<button className="secondary" disabled={pending === "save" || !dirty} type="submit">{pending === "save" ? "Saving..." : "Save slide changes"}</button></form><div className="copilot-divider"><span>or request a revision</span></div><div className="copilot-box"><div><span className="copilot-spark">✦</span><strong>Contextual revision</strong></div>{foundryConfigured ? <><p>Describe the outcome you want. Changes are validated before being saved.</p><form action={revise}><textarea name="instruction" rows={3} placeholder="Make the architecture slide more technical..." /><button className="secondary" disabled={pending === "revise"} type="submit">{pending === "revise" ? "Applying..." : "Apply AI revision"}</button></form></> : <p>AI revisions are unavailable in demo mode. Edit the slide fields directly instead.</p>}{error?.area === "revise" && <p className="error" role="alert">{error.message}</p>}{changeSummary && <p className="change-summary">{changeSummary}</p>}</div></aside>}</section></>;
+  return <>{stageNav}<section className="approval-bar"><button className="secondary back-button" onClick={() => navigateStage("brief")} type="button">← Back to brief</button><div><strong>Review the entire deck</strong><span>Approval includes all slides and narration, not only the selected slide.</span></div><button className="primary" disabled={Boolean(pending)} onClick={() => void approveDeck()} type="button">{pending === "approve" ? "Approving deck..." : "Approve entire deck & continue to video"}<span>→</span></button>{error?.area === "approve" && <p className="error" role="alert">{error.message}</p>}</section>{notice && <p className="workspace-notice success" role="status">{notice}</p>}{revision.imageWarnings.length > 0 && <div className="image-warnings" role="status"><strong>Some AI images used structured fallbacks</strong>{revision.imageWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}<section className="workspace review-workspace"><aside className="slide-list"><div className="panel-heading"><span>{revision.slides.length} slides</span><span>{formatTime(total)}</span></div>{revision.slides.map((slide, index) => <button className={slide.id === selected?.id ? "thumbnail selected" : "thumbnail"} key={slide.id} onClick={() => selectSlide(slide.id)}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{slide.title}</strong><small>{slide.layout} · {slide.visual.type}</small></div><time>{formatTime(slide.durationSeconds)}</time></button>)}</aside><div className="preview-panel"><div className="preview-toolbar"><div><span className={`source source-${revision.source}`}>{revision.source === "demo" ? "Demo content" : "AI generated"}</span>Revision {revision.version}</div><div className={Math.abs(durationStatus) > 10 ? "duration-warning" : "duration-ok"}>{formatTime(total)} / {formatTime(target)} target</div></div>{selected && <SlidePreview projectId={project.id} slide={selected} />}<div className="slide-intent"><div><span>Audience takeaway</span><p>{selected?.audienceTakeaway}</p></div><div><span>Visual intent</span><p>{selected && visualLabel(selected.visual)} — the on-screen structure is designed to make this slide&apos;s point scannable before the narration adds context.</p></div></div><div className="narration-preview"><strong>Voiceover</strong><p>{selected?.narration}</p></div><StrategyPanel strategy={revision.strategy} /><section className="revision-history"><div className="panel-heading"><strong>Revision history</strong><span>{project.revisions.length} versions</span></div>{project.revisions.toReversed().map((item) => <div className={item.id === revision.id ? "revision-row current" : "revision-row"} key={item.id}><div><strong>Revision {item.version}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.source === "demo" ? "Demo" : "AI"}</small></div><button className="text-button" disabled={Boolean(pending) || item.id === revision.id} onClick={() => void restoreRevision(item.id)} type="button">{item.id === revision.id ? "Current" : "Restore"}</button></div>)}{error?.area === "restore" && <p className="error" role="alert">{error.message}</p>}</section></div>{selected && <aside className="properties-panel" key={`${revision.id}-${selected.id}`}><form action={saveSlide} className="edit-slide-form" onChange={() => setDirty(true)}><div className="panel-heading"><strong>Edit slide</strong><span>{selected.layout} · {selected.visual.type}</span></div><label>Title<input name="title" defaultValue={selected.title} required /></label><label>Purpose<input name="purpose" defaultValue={selected.purpose} required /><small className="field-help">The role this slide plays in your story.</small></label><label>Audience takeaway<textarea name="audienceTakeaway" defaultValue={selected.audienceTakeaway} required rows={3} /></label><label>Key points<textarea name="bullets" rows={5} defaultValue={selected.bullets.join("\n")} /><small className="field-help">Each line becomes one bullet.</small></label><VisualEditor visual={selected.visual} /><NarrationEditor slide={selected} />{dirty && <p className="unsaved-note" role="status">Unsaved changes</p>}{error?.area === "save" && <p className="error" role="alert">{error.message}</p>}<button className="secondary" disabled={pending === "save" || !dirty} type="submit">{pending === "save" ? "Saving..." : "Save slide changes"}</button></form><div className="copilot-divider"><span>or request a revision</span></div><div className="copilot-box"><div><span className="copilot-spark">✦</span><strong>AI revision</strong></div>{foundryConfigured ? <><div className="revision-scope" role="group" aria-label="AI revision scope"><button className={revisionScope === "slide" ? "active" : ""} onClick={() => setRevisionScope("slide")} type="button">Selected slide</button><button className={revisionScope === "deck" ? "active" : ""} onClick={() => setRevisionScope("deck")} type="button">Whole deck</button></div><p>{revisionScope === "slide" ? `Only slide ${revision.slides.findIndex((slide) => slide.id === selected.id) + 1}, “${selected.title},” can change.` : "The AI may update multiple slides while preserving the deck structure and duration."}</p><form action={revise}><textarea name="instruction" rows={3} placeholder={revisionScope === "slide" ? "Make this slide more technical..." : "Make the whole story more technical..."} /><button className="secondary" disabled={pending === "revise"} type="submit">{pending === "revise" ? "Applying..." : revisionScope === "slide" ? "Revise selected slide" : "Revise whole deck"}</button></form></> : <p>AI revisions are unavailable in demo mode. Edit the slide fields directly instead.</p>}{error?.area === "revise" && <p className="error" role="alert">{error.message}</p>}{changeSummary && <p className="change-summary">{changeSummary}</p>}</div></aside>}</section></>;
 }

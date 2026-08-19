@@ -30,10 +30,19 @@ export function restoreProjectRevision(
     version: Math.max(...project.revisions.map((candidate) => candidate.version), 0) + 1,
     createdAt: new Date().toISOString(),
   };
+  const assets = project.assets.filter((asset) => {
+    if (asset.slideId) {
+      return restored.slides.some((slide) => slide.id === asset.slideId);
+    }
+    return restored.slides.some(
+      (slide) => slide.layout === "demo" && slide.visual.type === "demo",
+    );
+  });
   return invalidateDeckOutputs({
     ...project,
     revisions: [...project.revisions, restored],
     activeRevisionId: restored.id,
+    assets,
     lastError: null,
   });
 }

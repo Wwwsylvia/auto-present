@@ -1,6 +1,7 @@
 import {
   actualDurationSeconds,
   narrationFit,
+  requiresFullNarrative,
   type PresentationStrategy,
   type Slide,
   type Visual,
@@ -9,6 +10,9 @@ import { slideCopyFitIssues } from "@/lib/slide-fit";
 
 export type DeckQualityCheckName =
   | "narrative"
+  | "slide-count"
+  | "audience-specificity"
+  | "concrete-content"
   | "known-evidence"
   | "visual-diversity"
   | "text-density"
@@ -32,6 +36,7 @@ export type DeckQuality = {
 
 export type DeckQualityOptions = {
   targetDurationSeconds: number;
+  targetSlideCount?: number;
   knownEvidencePaths?: Iterable<string>;
 };
 
@@ -63,6 +68,8 @@ export function visualText(visual: Visual): string[] {
       return visual.events.flatMap((event) => [event.label, event.detail ?? ""]);
     case "demo":
       return [visual.setup, visual.action, visual.payoff];
+    case "image":
+      return [visual.caption, visual.altText, ...visualText(visual.fallback)];
   }
 }
 
@@ -91,10 +98,17 @@ export function evaluateDeckQuality(
   const { slides } = revision;
   const narrativeMissing = [
     slides[0]?.layout === "hero" ? undefined : "hero must be first",
-    slides.some((slide) => slide.layout === "problem") ? undefined : "problem layout is missing",
-    slides.some((slide) => slide.layout === "solution") ? undefined : "solution layout is missing",
+    requiresFullNarrative(slides.length) && !slides.some((slide) => slide.layout === "problem")
+      ? "problem layout is missing"
+      : undefined,
+    requiresFullNarrative(slides.length) && !slides.some((slide) => slide.layout === "solution")
+      ? "solution layout is missing"
+      : undefined,
     slides.at(-1)?.layout === "closing" ? undefined : "closing must be last",
   ].filter((item): item is string => Boolean(item));
+  const compactArcValid =
+    slides.length !== 3 ||
+    (slides[1]?.layout === "comparison" || slides[1]?.layout === "solution");
 
   const allEvidencePaths = [
     ...revision.strategy.proofPoints.flatMap((point) => point.evidencePaths),
@@ -105,8 +119,12 @@ export function evaluateDeckQuality(
     ? allEvidencePaths.filter((path) => !knownPaths.has(path))
     : [];
 
-  const visualTypes = new Set(slides.map((slide) => slide.visual.type));
-  const requiredVisualTypes = Math.min(3, slides.length);
+  const visualTypes = new Set(
+    slides.map((slide) =>
+      slide.visual.type === "image" ? `image:${slide.visual.fallback.type}` : slide.visual.type,
+    ),
+  );
+  const requiredVisualTypes = slides.length === 3 ? 2 : Math.min(3, slides.length);
   const textHeavySlides = slides.filter((slide) => {
     const text = [
       slide.purpose,
@@ -143,12 +161,45 @@ export function evaluateDeckQuality(
   );
   const narrationValid = missingNarration.length === 0 && mouseActionNarration.length === 0;
   const narrationOverruns = slides.filter((slide) => !narrationFit(slide).fits);
+  const audienceLens = revision.strategy.audienceLens;
+  const audienceSpecific =
+    audienceLens.priorities.length > 0 &&
+    audienceLens.decision !== audienceLens.callToAction &&
+    audienceLens.preferredProof.length >= 12;
+  const concreteSlides = slides.filter((slide) =>
+    slide.visual.type !== "statement" ||
+    slide.bullets.length > 0 ||
+    slide.evidencePaths.length > 0,
+  );
 
   const checks: DeckQualityCheck[] = [
     check(
       "narrative",
-      narrativeMissing.length === 0,
-      narrativeMissing.length === 0 ? "Hero, problem, solution, and closing stages are present." : narrativeMissing.join("; "),
+      narrativeMissing.length === 0 && compactArcValid,
+      narrativeMissing.length === 0 && compactArcValid
+        ? requiresFullNarrative(slides.length)
+          ? "Hero, problem, solution, and closing stages are present."
+          : "The compact hero, combined problem/solution, and closing arc is present."
+        : [...narrativeMissing, ...(!compactArcValid ? ["compact middle slide is missing"] : [])].join("; "),
+    ),
+    check(
+      "slide-count",
+      options.targetSlideCount === undefined || slides.length === options.targetSlideCount,
+      options.targetSlideCount === undefined
+        ? `${slides.length} slides generated.`
+        : `${slides.length} slides generated; ${options.targetSlideCount} required.`,
+    ),
+    check(
+      "audience-specificity",
+      audienceSpecific,
+      audienceSpecific
+        ? "The strategy defines the audience decision, proof preference, priorities, and call to action."
+        : "The audience decision lens is not specific enough.",
+    ),
+    check(
+      "concrete-content",
+      concreteSlides.length >= Math.max(1, Math.ceil(slides.length / 2)),
+      `${concreteSlides.length} of ${slides.length} slides contain structured examples, support, or evidence.`,
     ),
     check(
       "known-evidence",

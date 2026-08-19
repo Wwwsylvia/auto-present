@@ -70,6 +70,14 @@ function selfPresentation(): Project {
       summary: "Solve the presentation problem for teams.",
       strategy: {
         audienceGoal: "Show judges how Idea2Impact saves builders time.",
+        audienceLens: {
+          decision: "Decide whether Idea2Impact should advance.",
+          priorKnowledge: "Judges know hackathon delivery constraints.",
+          priorities: ["Builder impact", "Credibility"],
+          objections: [],
+          preferredProof: "A working generated deck and rendered video.",
+          callToAction: "Advance Idea2Impact.",
+        },
         coreMessage: "Idea2Impact turns project context into a clear presentation.",
         problem: "Builders lose time producing presentations instead of improving products.",
         solution: "A validated Foundry workflow creates and renders the presentation.",
@@ -82,6 +90,7 @@ function selfPresentation(): Project {
           rationale: "The acceptance fixture validates the core narrative without footage.",
         },
       },
+      imageWarnings: [],
       slides,
       promptVersion: "test",
       source: "foundry",

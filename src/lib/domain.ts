@@ -57,7 +57,7 @@ const visualCardSchema = z.object({
   body: shortText(180).optional(),
 });
 
-export const visualSchema = z.discriminatedUnion("type", [
+export const structuredVisualSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("statement"),
     statement: shortText(220),
@@ -97,6 +97,19 @@ export const visualSchema = z.discriminatedUnion("type", [
     payoff: shortText(180),
   }),
 ]);
+export type StructuredVisual = z.infer<typeof structuredVisualSchema>;
+
+export const visualSchema = z.discriminatedUnion("type", [
+  ...structuredVisualSchema.options,
+  z.object({
+    type: z.literal("image"),
+    prompt: shortText(1200),
+    altText: shortText(280),
+    caption: shortText(180),
+    assetId: z.uuid().optional(),
+    fallback: structuredVisualSchema,
+  }),
+]);
 export type Visual = z.infer<typeof visualSchema>;
 
 export const narrativeStageSchema = z.enum(["hook", "problem", "solution", "proof", "demo", "close"]);
@@ -116,6 +129,21 @@ export type ProofPoint = z.infer<typeof proofPointSchema>;
 
 export const presentationStrategySchema = z.object({
   audienceGoal: shortText(360),
+  audienceLens: z.object({
+    decision: shortText(280),
+    priorKnowledge: shortText(280),
+    priorities: z.array(shortText(160)).min(1).max(5),
+    objections: z.array(shortText(180)).max(4),
+    preferredProof: shortText(280),
+    callToAction: shortText(280),
+  }).default({
+    decision: "Decide whether the idea should move forward.",
+    priorKnowledge: "Assume only the context supplied in the brief.",
+    priorities: ["Clear value", "Credible proof"],
+    objections: [],
+    preferredProof: "Concrete outcomes supported by available evidence.",
+    callToAction: "Advance the next validation step.",
+  }),
   coreMessage: shortText(360),
   problem: shortText(600),
   solution: shortText(600),
@@ -167,6 +195,7 @@ export const presentationRevisionSchema = z.object({
   slides: z.array(slideSchema).min(3).max(20),
   promptVersion: z.string(),
   source: z.enum(["foundry", "demo"]),
+  imageWarnings: z.array(shortText(500)).default([]),
 });
 export type PresentationRevision = z.infer<typeof presentationRevisionSchema>;
 
@@ -194,6 +223,8 @@ export const assetSchema = z.object({
   mimeType: z.string(),
   size: z.number().positive(),
   localPath: z.string(),
+  slideId: z.string().optional(),
+  durationSeconds: z.number().positive().max(180).optional(),
 });
 export type Asset = z.infer<typeof assetSchema>;
 
@@ -264,12 +295,27 @@ export const revisionPatchSchema = z.object({
 });
 export type RevisionPatch = z.infer<typeof revisionPatchSchema>;
 
+export const revisionScopeSchema = z.enum(["slide", "deck"]);
+export type RevisionScope = z.infer<typeof revisionScopeSchema>;
+
 export function activeRevision(project: Project): PresentationRevision | undefined {
   return project.revisions.find((revision) => revision.id === project.activeRevisionId);
 }
 
 export function targetDurationSeconds(project: Pick<Project, "input">): number {
   return project.input.durationMinutes * 60;
+}
+
+export function targetSlideCountFromSeconds(seconds: number): number {
+  return Math.max(3, Math.min(20, Math.round(seconds / 30)));
+}
+
+export function targetSlideCount(project: Pick<Project, "input">): number {
+  return targetSlideCountFromSeconds(targetDurationSeconds(project));
+}
+
+export function requiresFullNarrative(slideCount: number): boolean {
+  return slideCount >= 4;
 }
 
 export function actualDurationSeconds(revision: { slides: readonly Pick<Slide, "durationSeconds">[] }): number {

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseGitHubUrl } from "@/lib/github";
-import { projectInputSchema } from "@/lib/domain";
+import {
+  projectInputSchema,
+  targetSlideCountFromSeconds,
+} from "@/lib/domain";
 
 test("accepts the supported duration range", () => {
   assert.equal(
@@ -22,6 +25,13 @@ test("accepts the supported duration range", () => {
       durationMinutes: 11,
       githubUrl: "",
     }),
+  );
+});
+
+test("derives adaptive slide counts from presentation duration", () => {
+  assert.deepEqual(
+    [1, 2, 3, 5, 10].map((minutes) => targetSlideCountFromSeconds(minutes * 60)),
+    [3, 4, 6, 10, 20],
   );
 });
 

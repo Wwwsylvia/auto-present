@@ -27,7 +27,7 @@ function projectWithEvidence(): Project {
       idea: "A repository-aware presentation assistant that turns product context into a credible pitch.",
       audience: "Hackathon judges",
       tone: "confident",
-      durationMinutes: 2,
+      durationMinutes: 3,
       githubUrl: "https://github.com/example/pitch-assistant",
     },
     repository: {
@@ -59,6 +59,14 @@ function projectWithEvidence(): Project {
 function strategy(): PresentationStrategy {
   return {
     audienceGoal: "Help hackathon judges assess product value and implementation credibility quickly.",
+    audienceLens: {
+      decision: "Decide whether this project should advance.",
+      priorKnowledge: "Judges understand products but have limited repository context.",
+      priorities: ["Product value", "Implementation credibility"],
+      objections: ["Generic claims"],
+      preferredProof: "A focused demo and traceable repository evidence.",
+      callToAction: "Advance the project to the next round.",
+    },
     coreMessage: "Pitch Assistant turns repository context into a decision-ready pitch.",
     problem: "Judges must assess product value before they can read every repository detail.",
     solution: "The assistant turns curated repository evidence into a concise narrative.",
@@ -208,12 +216,12 @@ test("runs strategy, draft, and critic passes in order and assigns metadata afte
   const revision = await generatePresentation(projectWithEvidence(), queue.completion);
 
   assert.deepEqual(queue.calls.map((call) => call.pass), ["strategy", "draft", "critic"]);
-  assert.equal(revision.promptVersion, "deck-intelligence-v2");
+  assert.equal(revision.promptVersion, "deck-intelligence-v3");
   assert.equal(revision.source, "foundry");
   assert.equal(revision.slides[0].layout, "hero");
   assert.equal(revision.slides.at(-1)?.layout, "closing");
   assert.ok(revision.slides.every((slide) => slide.id.length > 0));
-  assert.equal(actualDurationSeconds(revision), 120);
+  assert.equal(actualDurationSeconds(revision), 180);
   assert.ok(queue.calls.every((call) => call.system.includes("UNTRUSTED EVIDENCE DATA")));
   assert.match(queue.calls.find((call) => call.pass === "draft")?.user ?? "", /"oneOf"/);
 });
@@ -320,7 +328,7 @@ test("deterministically compacts an otherwise valid overfilled critic slide", as
   const revision = await generatePresentation(projectWithEvidence(), queue.completion);
   const compactedDemo = revision.slides.find((slide) => slide.layout === "demo");
   const quality = evaluateDeckQuality(revision, {
-    targetDurationSeconds: 120,
+    targetDurationSeconds: 180,
     knownEvidencePaths: ["README.md"],
   });
 
@@ -369,7 +377,36 @@ test("emits a rich, idea-specific fallback when no completion boundary is config
   assert.equal(revision.strategy.demoPlan.recommendation, "include");
   assert.ok(revision.slides.some((slide) => slide.visual.type === "demo"));
   assert.ok(revision.slides.some((slide) => slide.evidencePaths.includes("README.md")));
-  assert.equal(actualDurationSeconds(revision), 120);
+  assert.equal(actualDurationSeconds(revision), 180);
+});
+
+test("scales fallback slide count with the requested duration", async () => {
+  for (const [minutes, expected] of [[1, 3], [2, 4], [3, 6], [5, 10], [10, 20]] as const) {
+    const project = projectWithEvidence();
+    project.input.durationMinutes = minutes;
+    const revision = await generatePresentation(project);
+    assert.equal(revision.slides.length, expected);
+    assert.equal(actualDurationSeconds(revision), minutes * 60);
+  }
+});
+
+test("changes the decision lens for technical and business audiences", async () => {
+  const technical = projectWithEvidence();
+  technical.input.audience = "Platform architects";
+  const business = projectWithEvidence();
+  business.input.audience = "Venture investors";
+
+  const [technicalDeck, businessDeck] = await Promise.all([
+    generatePresentation(technical),
+    generatePresentation(business),
+  ]);
+
+  assert.notEqual(
+    technicalDeck.strategy.audienceLens.decision,
+    businessDeck.strategy.audienceLens.decision,
+  );
+  assert.match(technicalDeck.strategy.audienceLens.preferredProof, /architecture|implementation/i);
+  assert.match(businessDeck.strategy.audienceLens.preferredProof, /customer|differentiation|milestone/i);
 });
 
 test("omits a speculative fallback demo when the idea has no visual interaction", async () => {
@@ -388,7 +425,7 @@ test("omits a speculative fallback demo when the idea has no visual interaction"
 
   assert.equal(revision.strategy.demoPlan.recommendation, "omit");
   assert.equal(revision.slides.some((slide) => slide.layout === "demo"), false);
-  assert.equal(actualDurationSeconds(revision), 120);
+  assert.equal(actualDurationSeconds(revision), 180);
 });
 
 test("keeps fallback slide titles valid for long briefs", async () => {
@@ -443,7 +480,7 @@ test("keeps verbose schema-valid audience descriptions within fallback density l
 
   const revision = await generatePresentation(project);
   const quality = evaluateDeckQuality(revision, {
-    targetDurationSeconds: 120,
+    targetDurationSeconds: 180,
     knownEvidencePaths: ["README.md"],
   });
 
@@ -509,10 +546,61 @@ test("accepts contextual rich slide patches and supplies strategy and repository
   assert.match(queue.calls[0].system, /UNTRUSTED EVIDENCE DATA/);
 });
 
+test("rejects a selected-slide revision that changes another slide", async () => {
+  const base = await generatePresentation(projectWithEvidence());
+  const project = {
+    ...projectWithEvidence(),
+    revisions: [base],
+    activeRevisionId: base.id,
+  };
+  const selected = base.slides[0];
+  const other = base.slides[1];
+  const response = JSON.stringify({
+    summary: "Changed the wrong slide.",
+    slideChanges: [{
+      slideId: other.id,
+      changes: { title: "This should be rejected" },
+    }],
+  });
+
+  const queue = queuedCompletion([response, response, response]);
+
+  await assert.rejects(
+    generateRevisionPatch(project, "Improve this slide.", "slide", selected.id, queue.completion),
+    /selected-slide revision cannot change another slide/i,
+  );
+});
+
+test("validates legacy deck revisions against their existing slide count", async () => {
+  const sourceProject = projectWithEvidence();
+  const base = await generatePresentation(sourceProject);
+  const legacy = {
+    ...base,
+    slides: base.slides.map((slide) => ({ ...slide, durationSeconds: 20 })),
+  };
+  const project = {
+    ...sourceProject,
+    input: { ...sourceProject.input, durationMinutes: 2 },
+    revisions: [legacy],
+    activeRevisionId: legacy.id,
+  };
+  const response = JSON.stringify({
+    summary: "Clarified one title.",
+    slideChanges: [{
+      slideId: legacy.slides[1].id,
+      changes: { title: "Evaluation pressure is visible" },
+    }],
+  });
+  const queue = queuedCompletion([response]);
+
+  const patch = await generateRevisionPatch(project, "Clarify the problem title.", "deck", undefined, queue.completion);
+  assert.equal(patch.slideChanges[0].changes.title, "Evaluation pressure is visible");
+});
+
 test("quality evaluation recognizes a validated generated deck", async () => {
   const revision = await generatePresentation(projectWithEvidence());
   const quality = evaluateDeckQuality(revision, {
-    targetDurationSeconds: 120,
+    targetDurationSeconds: 180,
     knownEvidencePaths: ["README.md"],
   });
 
