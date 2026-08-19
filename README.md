@@ -80,7 +80,6 @@ Then open `http://127.0.0.1:3000`. `npm start` remains localhost-only; “produc
 | `FOUNDRY_MODEL_DEPLOYMENT` | Deployed model name |
 | `AZURE_SPEECH_KEY` | Optional Azure AI Speech subscription-key fallback |
 | `AZURE_SPEECH_REGION` | Azure AI Speech region |
-| `AZURE_SPEECH_ENDPOINT` | Custom Speech resource endpoint; required for passwordless authentication |
 | `AZURE_SPEECH_RESOURCE_ID` | Full Azure resource ID; required to construct passwordless Speech authorization |
 | `AZURE_SPEECH_VOICE` | Optional voice; defaults to `en-US-AvaMultilingualNeural` |
 | `AZURE_SPEECH_USE_AZURE_CREDENTIAL` | Use passwordless Azure CLI identity; defaults to `true` |

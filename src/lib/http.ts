@@ -16,10 +16,8 @@ export function rejectNonLocalRequest(request: Request): NextResponse | undefine
     hostUrl = undefined;
   }
   if (
-    !isLoopback(requestUrl.hostname) ||
     !hostUrl ||
-    !isLoopback(hostUrl.hostname) ||
-    hostUrl.origin !== requestUrl.origin
+    !isLoopback(hostUrl.hostname)
   ) {
     return NextResponse.json(
       { error: "Idea2Impact only accepts local requests" },
@@ -31,7 +29,7 @@ export function rejectNonLocalRequest(request: Request): NextResponse | undefine
   if (origin) {
     try {
       const originUrl = new URL(origin);
-      if (!isLoopback(originUrl.hostname) || originUrl.origin !== requestUrl.origin) {
+      if (!isLoopback(originUrl.hostname) || originUrl.origin !== hostUrl.origin) {
         return NextResponse.json(
           { error: "Cross-origin requests are not allowed" },
           { status: 403 },
