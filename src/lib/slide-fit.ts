@@ -1,4 +1,4 @@
-import type { Slide, Visual } from "@/lib/domain";
+import type { Slide, StructuredVisual, Visual } from "@/lib/domain";
 
 type SlideCopy = Pick<
   Slide,
@@ -32,6 +32,8 @@ function textFits(value: string, budget: TextBudget): boolean {
   );
 }
 
+function fitVisual(visual: StructuredVisual): StructuredVisual;
+function fitVisual(visual: Visual): Visual;
 function fitVisual(visual: Visual): Visual {
   switch (visual.type) {
     case "statement":
@@ -98,6 +100,14 @@ function fitVisual(visual: Visual): Visual {
         action: compactText(visual.action, { words: 7, characters: 76 }),
         payoff: compactText(visual.payoff, { words: 7, characters: 76 }),
       };
+    case "image":
+      return {
+        ...visual,
+        prompt: compactText(visual.prompt, { words: 120, characters: 900 }),
+        altText: compactText(visual.altText, { words: 24, characters: 220 }),
+        caption: compactText(visual.caption, { words: 10, characters: 100 }),
+        fallback: fitVisual(visual.fallback),
+      };
   }
 }
 
@@ -162,6 +172,13 @@ function visualFitIssues(visual: Visual): string[] {
         ...(textFits(visual.setup, { words: 7, characters: 76 }) ? [] : ["demo setup"]),
         ...(textFits(visual.action, { words: 7, characters: 76 }) ? [] : ["demo action"]),
         ...(textFits(visual.payoff, { words: 7, characters: 76 }) ? [] : ["demo payoff"]),
+      ];
+    case "image":
+      return [
+        ...(textFits(visual.prompt, { words: 120, characters: 900 }) ? [] : ["image prompt"]),
+        ...(textFits(visual.altText, { words: 24, characters: 220 }) ? [] : ["image alt text"]),
+        ...(textFits(visual.caption, { words: 10, characters: 100 }) ? [] : ["image caption"]),
+        ...visualFitIssues(visual.fallback).map((issue) => `image fallback ${issue}`),
       ];
   }
 }

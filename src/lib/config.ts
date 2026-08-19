@@ -12,6 +12,13 @@ export function foundryConfigured(): boolean {
   );
 }
 
+export function foundryImageConfigured(): boolean {
+  return Boolean(
+    process.env.FOUNDRY_IMAGE_ENDPOINT &&
+      process.env.FOUNDRY_IMAGE_MODEL_DEPLOYMENT,
+  );
+}
+
 export function speechConfigured(): boolean {
   return Boolean(
     process.env.AZURE_SPEECH_REGION &&

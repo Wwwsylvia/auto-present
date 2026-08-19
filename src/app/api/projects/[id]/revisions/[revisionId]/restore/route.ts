@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { rejectNonLocalMutation } from "@/lib/http";
+import { removeFilesBestEffort } from "@/lib/local-files";
 import { restoreProjectRevision } from "@/lib/project-state";
 import { invalidateRenderJobs } from "@/lib/render-queue";
 import { getProject, updateProject } from "@/lib/store";
@@ -21,15 +22,27 @@ export async function POST(
   }
 
   try {
+    let removedAssetPaths: string[] = [];
     const updated = await updateProject(
       id,
-      (current) =>
-        restoreProjectRevision(current, revisionId, body.expectedActiveRevisionId!),
+      (current) => {
+        const restored = restoreProjectRevision(
+          current,
+          revisionId,
+          body.expectedActiveRevisionId!,
+        );
+        const retainedAssetIds = new Set(restored.assets.map((asset) => asset.id));
+        removedAssetPaths = current.assets
+          .filter((asset) => !retainedAssetIds.has(asset.id))
+          .map((asset) => asset.localPath);
+        return restored;
+      },
       {
         beforeCommit: (next) =>
           invalidateRenderJobs(id, next.activeRevisionId ?? ""),
       },
     );
+    await removeFilesBestEffort(removedAssetPaths);
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof Error && error.message === "REVISION_CONFLICT") {

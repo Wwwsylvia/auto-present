@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { generatePresentation } from "@/lib/generate";
+import { removeGeneratedImages } from "@/lib/generated-images";
+import { removeFilesBestEffort } from "@/lib/local-files";
 import { inspectPublicRepository } from "@/lib/github";
 import { projectInputSchema } from "@/lib/domain";
 import { invalidateDeckOutputs } from "@/lib/project-state";
@@ -34,6 +36,8 @@ export async function POST(
     );
   }
 
+  let generatedAssetIds: string[] = [];
+  let removedDemoPaths: string[] = [];
   try {
     const repositoryChanged = input.data.githubUrl !== project.input.githubUrl;
     const repository =
@@ -43,6 +47,11 @@ export async function POST(
           ? project.repository
           : null;
     const revision = await generatePresentation({ ...project, input: input.data, repository });
+    generatedAssetIds = revision.slides.flatMap((slide) =>
+      slide.visual.type === "image" && slide.visual.assetId
+        ? [slide.visual.assetId]
+        : [],
+    );
     const updated = await updateProject(
       id,
       (current) => {
@@ -52,10 +61,14 @@ export async function POST(
         ) {
           throw new Error("REVISION_CONFLICT");
         }
+        removedDemoPaths = current.assets
+          .filter((asset) => asset.kind === "demo-video")
+          .map((asset) => asset.localPath);
         return invalidateDeckOutputs({
           ...current,
           input: input.data,
           repository,
+          assets: current.assets.filter((asset) => asset.kind !== "demo-video"),
           revisions: [...current.revisions, revision],
           activeRevisionId: revision.id,
           approvedPlanRevisionId: revision.id,
@@ -64,8 +77,10 @@ export async function POST(
       },
       { beforeCommit: () => invalidateRenderJobs(id, revision.id) },
     );
+    await removeFilesBestEffort(removedDemoPaths);
     return NextResponse.json(updated);
   } catch (error) {
+    await removeGeneratedImages(id, generatedAssetIds);
     if (error instanceof Error && error.message === "REVISION_CONFLICT") {
       return NextResponse.json(
         { error: "The project changed while regenerating. Review the latest version and try again." },

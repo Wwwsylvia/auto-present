@@ -45,6 +45,14 @@ function approvedProject(): Project {
         summary: "Summary",
         strategy: {
           audienceGoal: "Understand the product and approve the next step.",
+          audienceLens: {
+            decision: "Decide whether to use the workflow.",
+            priorKnowledge: "The audience knows the core problem.",
+            priorities: ["Outcome", "Reliability"],
+            objections: [],
+            preferredProof: "A visible rendered result.",
+            callToAction: "Try the workflow.",
+          },
           coreMessage: "The product turns ideas into clear presentations.",
           problem: "Teams struggle to communicate strong ideas quickly.",
           solution: "A guided workflow creates a structured presentation.",
@@ -59,6 +67,7 @@ function approvedProject(): Project {
         },
         promptVersion: "test",
         source: "demo",
+        imageWarnings: [],
         slides: ["hero", "architecture", "closing"].map((layout, index) => ({
           id: `slide-${index}`,
           title: `Slide ${index}`,

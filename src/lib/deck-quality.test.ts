@@ -55,6 +55,9 @@ test("returns typed quality checks for a valid deck", async () => {
     quality.checks.map((check) => check.name),
     [
       "narrative",
+      "slide-count",
+      "audience-specificity",
+      "concrete-content",
       "known-evidence",
       "visual-diversity",
       "text-density",
@@ -75,11 +78,18 @@ test("reports each deterministic quality failure without model access", async ()
     ...revision,
     strategy: {
       ...revision.strategy,
-      demoPlan: { recommendation: "omit" as const, rationale: "Do not show a walkthrough." },
+      audienceLens: {
+        ...revision.strategy.audienceLens,
+        decision: "Same",
+        callToAction: "Same",
+        preferredProof: "Vague",
+      },
+      demoPlan: { recommendation: "include" as const, rationale: "A walkthrough is required." },
     },
     slides: revision.slides.map((slide, index) => ({
       ...slide,
       title: index < 2 ? "Repeated claim" : slide.title,
+      bullets: [],
       audienceTakeaway: index === 0 ? denseText : slide.audienceTakeaway,
       layout: index === 0 ? ("solution" as const) : slide.layout,
       visual: { type: "statement" as const, statement: "Same visual treatment" },
@@ -95,6 +105,7 @@ test("reports each deterministic quality failure without model access", async ()
   };
   const quality = evaluateDeckQuality(broken, {
     targetDurationSeconds: 60,
+    targetSlideCount: 4,
     knownEvidencePaths: ["README.md"],
   });
   const failed = new Set(quality.checks.filter((check) => !check.passed).map((check) => check.name));
@@ -102,6 +113,9 @@ test("reports each deterministic quality failure without model access", async ()
   assert.equal(quality.score, 0);
   assert.deepEqual(failed, new Set([
     "narrative",
+    "slide-count",
+    "audience-specificity",
+    "concrete-content",
     "known-evidence",
     "visual-diversity",
     "text-density",

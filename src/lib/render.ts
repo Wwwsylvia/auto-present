@@ -4,6 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { speechConfigured } from "@/lib/config";
 import { activeRevision, type Project, type RenderJob, type Slide } from "@/lib/domain";
+import { generatedImagePath } from "@/lib/generated-images";
 import { renderDirectory } from "@/lib/render-queue";
 import { sentenceCues, synthesizeSpeech } from "@/lib/speech";
 
@@ -108,7 +109,7 @@ function layoutBackdrop(layout: Slide["layout"], theme: RenderTheme): string {
  }
 }
 
-function renderVisual(slide: Slide, theme: RenderTheme): string {
+function renderVisual(slide: Slide, theme: RenderTheme, imageDataUri?: string): string {
  const { visual } = slide;
  switch (visual.type) {
    case "statement":
@@ -187,6 +188,16 @@ function renderVisual(slide: Slide, theme: RenderTheme): string {
            <text x="${x}" y="432" class="demo-label">${label}</text>${textBlock(body, x, 470, 29, "demo-body", 22)}</g>`;
        }).join("")}
      </g>`;
+   case "image":
+     if (!visual.assetId || !imageDataUri) {
+       return renderVisual({ ...slide, visual: visual.fallback }, theme);
+     }
+     return `<g data-visual="image" class="visual-image">
+       <defs><clipPath id="generated-image-clip"><rect x="80" y="250" width="1120" height="330" rx="18"/></clipPath></defs>
+       <image href="${imageDataUri}" x="80" y="250" width="1120" height="330" preserveAspectRatio="xMidYMid slice" clip-path="url(#generated-image-clip)"/>
+       <rect x="80" y="522" width="1120" height="58" fill="#102D24" opacity=".9"/>
+       ${textBlock(visual.caption, 108, 557, 58, "image-caption", 20)}
+     </g>`;
  }
 }
 
@@ -204,7 +215,7 @@ function renderBulletRail(bullets: readonly string[]): string {
 }
 
 /** Renders the deck's approved content without I/O so preview and video rendering share a composition. */
-export function renderSlideSvg(slide: Slide, index: number): string {
+export function renderSlideSvg(slide: Slide, index: number, imageDataUri?: string): string {
  const theme = themes[slide.layout];
  const heroLike = slide.layout === "hero" || slide.layout === "closing";
  const titleX = heroLike ? 80 : 80;
@@ -229,12 +240,13 @@ export function renderSlideSvg(slide: Slide, index: number): string {
      .metric-label { font-size: 19px; font-weight: 800; } .demo-label { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; fill: ${theme.accent}; }
      .bullet-heading { font-size: 10px; font-weight: 800; letter-spacing: 1.4px; fill: ${theme.accent}; }
      .bullet { font-size: 12px; fill: ${theme.muted}; }
+     .image-caption { font-size: 18px; font-weight: 700; fill: #FFFFFF; }
    </style>
    <text x="80" y="48" class="meta">IDEA2IMPACT / ${escapeXml(slide.layout.toUpperCase())}</text>
    <text x="1200" y="48" text-anchor="end" class="meta">${String(index + 1).padStart(2, "0")}</text>
    ${textBlock(slide.purpose.toUpperCase(), titleX, heroLike ? 105 : 95, 42, "kicker", 18, "start", 2)}
    ${textBlock(slide.title, titleX, titleY, titleLength, "title", heroLike ? 66 : 52, "start", heroLike ? 2 : 3)}
-   ${renderVisual(slide, theme)}
+   ${renderVisual(slide, theme, imageDataUri)}
    ${renderBulletRail(slide.bullets)}
    <path d="M80 672H1200" stroke="${theme.line}" stroke-width="2"/>
    <text x="80" y="700" class="meta">IDEA → IMPACT</text>
@@ -247,12 +259,21 @@ export function findDemoSlideIndex(slides: readonly Pick<Slide, "layout" | "visu
 }
 
 export function resolveDemoFootageIndex(
- slides: readonly Pick<Slide, "layout" | "visual">[],
+ slides: readonly Pick<Slide, "id" | "layout" | "visual">[],
  hasDemoAsset: boolean,
+ targetSlideId?: string,
 ): number | undefined {
+ if (!hasDemoAsset) return undefined;
+ if (targetSlideId) {
+   const targetIndex = slides.findIndex((slide) => slide.id === targetSlideId);
+   if (targetIndex === -1) {
+     throw new Error("The approved deck no longer contains the demo clip target slide");
+   }
+   return targetIndex;
+ }
  const demoIndex = findDemoSlideIndex(slides);
- if (hasDemoAsset && demoIndex === undefined) {
-   throw new Error("The approved deck has a demo video asset but no semantic demo slide");
+ if (demoIndex === undefined) {
+   throw new Error("The legacy demo video asset has no semantic demo slide");
  }
  return demoIndex;
 }
@@ -341,11 +362,23 @@ export async function renderPresentation(
   let elapsed = 0;
   const captions: string[] = [];
   const demoAsset = project.assets.find((asset) => asset.kind === "demo-video");
-  const demoIndex = resolveDemoFootageIndex(revision.slides, Boolean(demoAsset));
+  const demoIndex = resolveDemoFootageIndex(
+    revision.slides,
+    Boolean(demoAsset),
+    demoAsset?.slideId,
+  );
   for (const [index, slide] of revision.slides.entries()) {
     const image = `slide-${index}.png`;
     const segment = `segment-${index}.mp4`;
-    await sharp(Buffer.from(renderSlideSvg(slide, index))).png().toFile(path.join(jobDirectory, image));
+    const imageDataUri =
+      slide.visual.type === "image" && slide.visual.assetId
+        ? `data:image/png;base64,${(await fs.readFile(
+            generatedImagePath(project.id, slide.visual.assetId),
+          )).toString("base64")}`
+        : undefined;
+    await sharp(Buffer.from(renderSlideSvg(slide, index, imageDataUri)))
+      .png()
+      .toFile(path.join(jobDirectory, image));
     const duration = slide.durationSeconds;
     let renderedDuration = duration;
     const segmentDemoAsset = index === demoIndex ? demoAsset : undefined;
